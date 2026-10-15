@@ -73,7 +73,7 @@ export const registerMitra = async (req: Request, res: Response) => {
 
     res.status(201).json({
       message: 'Registrasi Mitra berhasil! Menunggu verifikasi admin.',
-      userId: newUserId
+
     });
 
   } catch (error) {

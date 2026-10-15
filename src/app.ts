@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import router from './routes/index.js';
 import { notFound, globalErrorHandler } from './middlewares/errorMiddleware.js';
 import { auditLogger } from './middlewares/auditMiddleware.js';
+import authRoutes from './routes/authRoutes';
 
 // Load environment variables SEBELUM apapun
 dotenv.config();
@@ -37,6 +38,10 @@ app.use(
     credentials: true,
   })
 );
+
+// Tambahkan di bawah blok konfigurasi CORS Anda
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // -------------------------------------------------------
 // 2. Body Parsing
@@ -71,6 +76,8 @@ app.get('/health', (_req: Request, res: Response) => {
     environment: process.env['NODE_ENV'] ?? 'development',
   });
 });
+
+app.use('/api/auth', authRoutes);
 
 // -------------------------------------------------------
 // 6. Router Utama

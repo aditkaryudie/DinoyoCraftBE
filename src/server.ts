@@ -4,6 +4,7 @@
 // ============================================================
 
 import app from './app.js';
+import cors from 'cors';
 import { testConnection } from './config/database.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '5000', 10);
@@ -23,6 +24,11 @@ const startServer = async (): Promise<void> => {
   });
 };
 
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true
+}));
+
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason: unknown) => {
   console.error('🔥 Unhandled Rejection:', reason);
@@ -39,3 +45,5 @@ startServer().catch((err: unknown) => {
   console.error('❌ Gagal menjalankan server:', err);
   process.exit(1);
 });
+
+
