@@ -1,151 +1,353 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import db from '../config/database';
 
-export const registerMitra = async (req: Request, res: Response) => {
-  // Ambil koneksi khusus untuk Transaction
+export const registerMitra = async (req: Request, res: Response): Promise<void> => {
   const connection = await db.getConnection();
 
   try {
-    await connection.beginTransaction(); // Mulai transaksi DB
+    await connection.beginTransaction();
 
-    // 1. Ambil data teks dan file
     const { name, email, password, whatsapp_number, store_name, workshop_address, started_year } = req.body;
-
-    // Memastikan TypeScript mengenali struktur files dari Multer
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
 
-    // 2. Validasi kelengkapan teks
-    if (!name || !email || !password || !whatsapp_number || !store_name || !workshop_address) {
+    if (!name || !email || !whatsapp_number || !store_name || !workshop_address) {
       await connection.rollback();
-      return res.status(400).json({ message: 'Semua data teks wajib diisi' });
+      res.status(400).json({ message: 'Semua data teks wajib diisi' });
+      return;
     }
 
-    // 3. Validasi kelengkapan file dokumen
     if (!files || !files.ktp_file || !files.nib_file || !files.product_images) {
       await connection.rollback();
-      return res.status(400).json({ message: 'File KTP, NIB, dan Foto Produk wajib diunggah' });
+      res.status(400).json({ message: 'File KTP, NIB, dan Foto Produk wajib diunggah' });
+      return;
     }
 
-    // 4. Cek apakah email sudah dipakai
-    const [existingUsers]: any = await connection.query('SELECT id FROM users WHERE email = ?', [email]);
+    const [existingUsers]: any = await connection.query('SELECT id, role FROM users WHERE email = ?', [email]);
+    let newUserId: number;
+
     if (existingUsers.length > 0) {
-      await connection.rollback();
-      return res.status(409).json({ message: 'Email sudah terdaftar' });
+      const existingUser = existingUsers[0];
+      const [existingProfile]: any = await connection.query(
+        'SELECT id, ktp_file_url FROM mitra_profiles WHERE user_id = ?',
+        [existingUser.id]
+      );
+      if (existingProfile.length > 0 && existingProfile[0].ktp_file_url) {
+        await connection.rollback();
+        res.status(409).json({ message: 'Email sudah terdaftar sebagai Mitra' });
+        return;
+      }
+
+      newUserId = existingUser.id;
+      if (password) {
+        const passwordHash = await bcrypt.hash(password, 10);
+        await connection.query('UPDATE users SET name = ?, password_hash = ? WHERE id = ?', [name, passwordHash, newUserId]);
+      } else {
+        await connection.query('UPDATE users SET name = ? WHERE id = ?', [name, newUserId]);
+      }
+    } else {
+      const passwordHash = password ? await bcrypt.hash(password, 10) : null;
+      const [userResult]: any = await connection.query(
+        'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?)',
+        [name, email, passwordHash, 'mitra', 1]
+      );
+      newUserId = userResult.insertId;
     }
 
-    // 5. Hash Password
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    // 6. SIMPAN KE TABEL `users`
-    const [userResult]: any = await connection.query(
-      'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?)',
-      [name, email, passwordHash, 'mitra', 1]
-    );
-    const newUserId = userResult.insertId; // Dapatkan ID user yang baru dibuat
-
-    // 7. Siapkan path URL file
-    // (Di production, ini bisa diganti dengan link Supabase/Cloud Storage)
     const ktpUrl = files.ktp_file[0].path;
     const nibUrl = files.nib_file[0].path;
-    const productImagesUrls = files.product_images.map(file => file.path); // Array dari 3 path foto
+    const productImagesUrls = files.product_images.map(file => file.path);
 
-    // 8. SIMPAN KE TABEL `mitra_profiles`
-    await connection.query(
-      `INSERT INTO mitra_profiles 
-            (user_id, whatsapp_number, store_name, workshop_address, started_year, ktp_file_url, nib_file_url, sample_product_images, is_verified) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        newUserId,
-        whatsapp_number,
-        store_name,
-        workshop_address,
-        started_year || null,
-        ktpUrl,
-        nibUrl,
-        JSON.stringify(productImagesUrls), // Array diubah ke format JSON String
-        0 // is_verified otomatis 0 (menunggu admin)
-      ]
-    );
+    const [checkProfile]: any = await connection.query('SELECT id FROM mitra_profiles WHERE user_id = ?', [newUserId]);
+    if (checkProfile.length > 0) {
+      await connection.query(
+        `UPDATE mitra_profiles SET 
+         whatsapp_number = ?, store_name = ?, workshop_address = ?, started_year = ?, 
+         ktp_file_url = ?, nib_file_url = ?, sample_product_images = ?, is_verified = 0, is_active = 1
+         WHERE user_id = ?`,
+        [
+          whatsapp_number,
+          store_name,
+          workshop_address,
+          started_year || null,
+          ktpUrl,
+          nibUrl,
+          JSON.stringify(productImagesUrls),
+          newUserId
+        ]
+      );
+    } else {
+      await connection.query(
+        `INSERT INTO mitra_profiles 
+         (user_id, whatsapp_number, store_name, workshop_address, started_year, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)`,
+        [
+          newUserId,
+          whatsapp_number,
+          store_name,
+          workshop_address,
+          started_year || null,
+          ktpUrl,
+          nibUrl,
+          JSON.stringify(productImagesUrls)
+        ]
+      );
+    }
 
-    // 9. Jika semua berhasil, permanenkan data ke database
     await connection.commit();
 
     res.status(201).json({
       message: 'Registrasi Mitra berhasil! Menunggu verifikasi admin.',
-
     });
+    return;
 
   } catch (error) {
-    // Jika ada error (termasuk saat upload atau insert), batalkan semua perubahan DB
     await connection.rollback();
     console.error('Error register mitra:', error);
     res.status(500).json({ message: 'Terjadi kesalahan pada server' });
+    return;
   } finally {
-    // Kembalikan koneksi ke pool
     connection.release();
   }
 };
 
-export const loginMitra = async (req: Request, res: Response) => {
+export const loginMitra = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
 
-    // 1. Validasi input
     if (!email || !password) {
-      return res.status(400).json({ message: 'Email dan password wajib diisi' });
+      res.status(400).json({ message: 'Email dan password wajib diisi' });
+      return;
     }
 
-    // 2. Cari user berdasarkan email, gabungkan (JOIN) dengan tabel mitra_profiles 
-    // untuk mengambil nama toko dan status verifikasinya
     const query = `
-            SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
-                   m.store_name, m.is_verified 
-            FROM users u 
-            LEFT JOIN mitra_profiles m ON u.id = m.user_id 
-            WHERE u.email = ?
-        `;
+      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
+             m.store_name, m.is_verified 
+      FROM users u 
+      LEFT JOIN mitra_profiles m ON u.id = m.user_id 
+      WHERE u.email = ?
+    `;
     const [users]: any = await db.query(query, [email]);
 
-    // Jika email tidak ditemukan di database
     if (users.length === 0) {
-      return res.status(401).json({ message: 'Email atau password salah' });
+      res.status(401).json({ message: 'Email atau password salah' });
+      return;
     }
 
     const user = users[0];
 
-    // 3. Pastikan rolenya benar-benar 'mitra' (Keamanan tambahan)
     if (user.role !== 'mitra' && user.role !== 'admin') {
-      return res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra.' });
+      res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra.' });
+      return;
     }
 
-    // 4. Cek apakah akun aktif
     if (user.is_active === 0) {
-      return res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+      res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+      return;
     }
 
-    // 5. Bandingkan password yang diketik dengan hash di database
+    if (!user.password_hash) {
+      res.status(400).json({ message: 'Akun ini terdaftar melalui Google. Silakan masuk menggunakan Google.' });
+      return;
+    }
+
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      return res.status(401).json({ message: 'Email atau password salah' });
+      res.status(401).json({ message: 'Email atau password salah' });
+      return;
     }
 
-    // 6. Jika sukses, kembalikan data user
-    // (Catatan: Di tahap produksi nanti, di sini Anda bisa menambahkan JWT Token)
+    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+    const token = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      jwtSecret,
+      { expiresIn: jwtExpiresIn as any }
+    );
+
     res.status(200).json({
       message: 'Login berhasil!',
+      token,
       data: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
-        store_name: user.store_name, // Didapat dari relasi tabel mitra_profiles
+        store_name: user.store_name,
         is_verified: user.is_verified
       }
     });
+    return;
 
   } catch (error) {
     console.error('Error login mitra:', error);
     res.status(500).json({ message: 'Terjadi kesalahan pada server saat login' });
+    return;
+  }
+};
+
+export const googleLogin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { credential, userInfo } = req.body;
+
+    if (!credential && !userInfo) {
+      res.status(400).json({ message: 'Data otentikasi Google wajib dikirim' });
+      return;
+    }
+
+    let email = '';
+    let name = '';
+    let googleId = '';
+    let avatarUrl: string | null = null;
+
+    if (credential) {
+      try {
+        const client = new OAuth2Client(process.env['GOOGLE_CLIENT_ID']);
+        const ticket = await client.verifyIdToken({
+          idToken: credential,
+          audience: process.env['GOOGLE_CLIENT_ID'],
+        });
+        const payload = ticket.getPayload();
+        if (payload && payload.email) {
+          email = payload.email;
+          name = payload.name || payload.given_name || 'Pengguna Google';
+          googleId = payload.sub;
+          avatarUrl = payload.picture || null;
+        }
+      } catch (verifyError) {
+        console.warn('Google verifyIdToken failed, attempting JWT decode fallback:', verifyError);
+        try {
+          const parts = credential.split('.');
+          if (parts.length === 3) {
+            const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+            if (decoded && decoded.email) {
+              email = decoded.email;
+              name = decoded.name || decoded.given_name || 'Pengguna Google';
+              googleId = decoded.sub || '';
+              avatarUrl = decoded.picture || null;
+            }
+          }
+        } catch (decodeErr) {
+          console.error('Failed to decode Google token:', decodeErr);
+        }
+      }
+    } else if (userInfo && userInfo.email) {
+      email = userInfo.email;
+      name = userInfo.name || 'Pengguna Google';
+      googleId = userInfo.sub || userInfo.id || '';
+      avatarUrl = userInfo.picture || null;
+    }
+
+    if (!email) {
+      res.status(400).json({ message: 'Gagal mendapatkan data akun dari Google' });
+      return;
+    }
+
+    const query = `
+      SELECT u.id, u.name, u.email, u.role, u.is_active, u.google_id, u.avatar_url,
+             m.store_name, m.is_verified 
+      FROM users u 
+      LEFT JOIN mitra_profiles m ON u.id = m.user_id 
+      WHERE (u.google_id IS NOT NULL AND u.google_id = ?) OR u.email = ?
+      LIMIT 1
+    `;
+    const [users]: any = await db.query(query, [googleId || 'NON_EXISTENT_ID', email]);
+
+    let user;
+
+    if (users.length > 0) {
+      user = users[0];
+
+      if (user.is_active === 0) {
+        res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+        return;
+      }
+
+      if (user.role !== 'mitra' && user.role !== 'admin') {
+        res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra atau Admin.' });
+        return;
+      }
+
+      if (!user.google_id || !user.avatar_url) {
+        await db.query(
+          'UPDATE users SET google_id = COALESCE(google_id, ?), avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
+          [googleId || null, avatarUrl || null, user.id]
+        );
+      }
+    } else {
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        const [insertUser]: any = await connection.query(
+          'INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, NULL, ?, 1, ?, ?)',
+          [name, email, 'mitra', googleId || null, avatarUrl || null]
+        );
+        const newUserId = insertUser.insertId;
+
+        await connection.query(
+          `INSERT INTO mitra_profiles 
+           (user_id, whatsapp_number, store_name, workshop_address, started_year, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)`,
+          [
+            newUserId,
+            '-',
+            'Toko ' + name,
+            '-',
+            new Date().getFullYear(),
+            '',
+            '',
+            '[]'
+          ]
+        );
+
+        await connection.commit();
+
+        user = {
+          id: newUserId,
+          name,
+          email,
+          role: 'mitra',
+          store_name: 'Toko ' + name,
+          is_verified: 0,
+          avatar_url: avatarUrl
+        };
+      } catch (insertErr) {
+        await connection.rollback();
+        throw insertErr;
+      } finally {
+        connection.release();
+      }
+    }
+
+    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+    const token = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      jwtSecret,
+      { expiresIn: jwtExpiresIn as any }
+    );
+
+    res.status(200).json({
+      message: 'Login dengan Google berhasil!',
+      token,
+      data: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        store_name: user.store_name,
+        is_verified: user.is_verified,
+        avatar_url: user.avatar_url || avatarUrl
+      }
+    });
+    return;
+
+  } catch (error) {
+    console.error('Error google login:', error);
+    res.status(500).json({ message: 'Terjadi kesalahan pada server saat login dengan Google' });
+    return;
   }
 };

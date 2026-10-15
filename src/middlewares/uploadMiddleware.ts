@@ -3,10 +3,10 @@ import path from 'path';
 
 // Konfigurasi tempat penyimpanan dan nama file
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (_req, _file, cb) => {
     cb(null, 'uploads/'); // Pastikan folder 'uploads' sudah Anda buat
   },
-  filename: (req, file, cb) => {
+  filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
