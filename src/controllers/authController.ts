@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import db from '../config/database';
 
+
 export const registerMitra = async (req: Request, res: Response): Promise<void> => {
   const connection = await db.getConnection();
 
@@ -349,5 +350,73 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
     console.error('Error google login:', error);
     res.status(500).json({ message: 'Terjadi kesalahan pada server saat login dengan Google' });
     return;
+  }
+};
+
+export const getProfile = async (_req: Request, res: Response) => {
+  try {
+    const userId = res.locals['userId'];
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const [rows]: any = await db.query(
+      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+              m.store_name, m.whatsapp_number, m.workshop_address, 
+              m.started_year, m.description, m.website, m.instagram, 
+              m.banner_url, m.is_verified
+       FROM users u
+       LEFT JOIN mitra_profiles m ON u.id = m.user_id
+       WHERE u.id = ?`,
+      [userId]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
+    }
+
+    return res.status(200).json({ success: true, data: rows[0] });
+  } catch (error) {
+    console.error('Error getProfile:', error);
+    return res.status(500).json({ success: false, message: 'Terjadi kesalahan server' });
+  }
+};
+
+export const updateProfile = async (req: Request, res: Response) => {
+  try {
+    const userId = res.locals['userId'];
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const { ownerName, storeName, phone, address, yearStarted, description, website, instagram } = req.body;
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+
+    const avatarPath = files?.['avatar']?.[0] ? `/uploads/${files['avatar'][0].filename}` : null;
+    const bannerPath = files?.['banner']?.[0] ? `/uploads/${files['banner'][0].filename}` : null;
+
+    // Update nama & avatar_url di tabel users
+    await db.query(
+      `UPDATE users 
+       SET name = ?, 
+           avatar_url = COALESCE(?, avatar_url) 
+       WHERE id = ?`,
+      [ownerName, avatarPath, userId]
+    );
+
+    // Update profil mitra di tabel mitra_profiles
+    await db.query(
+      `UPDATE mitra_profiles 
+       SET store_name = ?, whatsapp_number = ?, workshop_address = ?, started_year = ?,
+           description = ?, website = ?, instagram = ?,
+           banner_url = COALESCE(?, banner_url)
+       WHERE user_id = ?`,
+      [
+        storeName, phone, address, yearStarted,
+        description, website, instagram,
+        bannerPath, userId
+      ]
+    );
+
+    return res.status(200).json({ success: true, message: 'Profil berhasil diperbarui' });
+  } catch (error) {
+    console.error('Error updateProfile:', error);
+    return res.status(500).json({ success: false, message: 'Gagal memperbarui profil' });
   }
 };

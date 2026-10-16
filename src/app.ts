@@ -10,6 +10,7 @@ import router from './routes/index.js';
 import { notFound, globalErrorHandler } from './middlewares/errorMiddleware.js';
 import { auditLogger } from './middlewares/auditMiddleware.js';
 import authRoutes from './routes/authRoutes';
+import path from 'path';
 
 // Load environment variables SEBELUM apapun
 dotenv.config();
@@ -77,6 +78,16 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
+// 1. Kunci target folder baca agar PERSIS SAMA dengan Multer
+const targetFolder = path.join(process.cwd(), 'uploads');
+
+// 2. Tampilkan di terminal untuk memastikan tidak salah folder
+console.log('📂 Static Server membaca dari:', targetFolder);
+
+// 3. Pasang middleware statis (HARUS DI ATAS app.use('/api/...'))
+app.use('/uploads', express.static(targetFolder));
+
+// Rute Utama
 app.use('/api/auth', authRoutes);
 
 // -------------------------------------------------------

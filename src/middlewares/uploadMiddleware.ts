@@ -1,20 +1,33 @@
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 
-// Konfigurasi tempat penyimpanan dan nama file
+// 1. Kunci target ke folder DinoyoCraftBE/uploads
+const targetFolder = path.join(process.cwd(), 'uploads');
+
+// 2. Buat folder otomatis jika tidak sengaja terhapus/belum ada
+if (!fs.existsSync(targetFolder)) {
+  fs.mkdirSync(targetFolder, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, 'uploads/'); // Pastikan folder 'uploads' sudah Anda buat
+    cb(null, targetFolder); // <-- Pastikan Multer menembak ke targetFolder
   },
   filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
+  },
 });
 
 // Kita gunakan .fields() karena ada beberapa jenis file yang berbeda
 export const uploadMitraDocs = multer({ storage }).fields([
   { name: 'ktp_file', maxCount: 1 },
   { name: 'nib_file', maxCount: 1 },
-  { name: 'product_images', maxCount: 3 }
+  { name: 'product_images', maxCount: 3 },
+]);
+
+export const uploadProfileImages = multer({ storage }).fields([
+  { name: 'avatar', maxCount: 1 },
+  { name: 'banner', maxCount: 1 },
 ]);
