@@ -53,4 +53,22 @@ router.post(
   adminController.createMasterData
 );
 
+/**
+ * @route   GET /api/admin/verifikasi
+ * @desc    Mendapatkan daftar pengajuan verifikasi toko mitra
+ * @access  Admin only
+ */
+router.get('/verifikasi', adminController.getVerifikasiList);
+
+/**
+ * @route   PATCH /api/admin/verifikasi/:id
+ * @desc    Setujui / tolak verifikasi toko mitra
+ * @access  Admin only
+ */
+router.patch(
+  '/verifikasi/:id',
+  validateBody([{ field: 'status', required: true, type: 'string' }]),
+  adminController.verifyMitraStore
+);
+
 export default router;

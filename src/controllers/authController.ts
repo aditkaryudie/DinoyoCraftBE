@@ -57,9 +57,9 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
       newUserId = userResult.insertId;
     }
 
-    const ktpUrl = files.ktp_file[0].path;
-    const nibUrl = files.nib_file[0].path;
-    const productImagesUrls = files.product_images.map(file => file.path);
+    const ktpUrl = `/uploads/${files.ktp_file[0].filename}`;
+    const nibUrl = `/uploads/${files.nib_file[0].filename}`;
+    const productImagesUrls = files.product_images.map(file => `/uploads/${file.filename}`);
 
     const [checkProfile]: any = await connection.query('SELECT id FROM mitra_profiles WHERE user_id = ?', [newUserId]);
     if (checkProfile.length > 0) {
@@ -146,6 +146,16 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
 
     if (user.is_active === 0) {
       res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+      return;
+    }
+
+    // ============================================================
+    // 🔒 PROTEKSI VERIFIKASI MITRA (TAMBAHAN LOGIK)
+    // ============================================================
+    if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
+      res.status(403).json({
+        message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
+      });
       return;
     }
 
@@ -321,6 +331,16 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       } finally {
         connection.release();
       }
+    }
+
+    // ============================================================
+    // 🔒 PROTEKSI VERIFIKASI MITRA UNTUK GOOGLE LOGIN
+    // ============================================================
+    if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
+      res.status(403).json({
+        message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
+      });
+      return;
     }
 
     const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
