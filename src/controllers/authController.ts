@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import db from '../config/database';
+import nodemailer from 'nodemailer';
 
 
 export const registerMitra = async (req: Request, res: Response): Promise<void> => {
@@ -440,3 +441,235 @@ export const updateProfile = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: 'Gagal memperbarui profil' });
   }
 };
+
+// ============================================================
+// 🔑 OTP Store (In-Memory) — Simpan OTP sementara
+// ============================================================
+interface OtpEntry {
+  code: string;
+  email: string;
+  expiresAt: number;
+  verified: boolean;
+}
+
+const otpStore = new Map<string, OtpEntry>();
+
+// Bersihkan OTP expired setiap 10 menit
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of otpStore.entries()) {
+    if (now > entry.expiresAt) {
+      otpStore.delete(key);
+    }
+  }
+}, 10 * 60 * 1000);
+
+
+
+// Konfigurasi Email Pengirim
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env['EMAIL_USER'],
+    pass: process.env['EMAIL_PASS'], // Pastikan pakai 16-digit App Password dari Google
+  },
+});
+
+// ============================================================
+// FORGOT PASSWORD — Kirim OTP ke email user
+// ============================================================
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  console.log("=== API FORGOT PASSWORD DI-HIT ===", req.body);
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({ success: false, message: 'Email wajib diisi' });
+      return;
+    }
+
+    // 1. Cek apakah user ada di database
+    const [users]: any = await db.query('SELECT id, name, email FROM users WHERE email = ?', [email]);
+    if (!users || users.length === 0) {
+      res.status(404).json({ success: false, message: 'Akun dengan email tersebut tidak ditemukan.' });
+      return;
+    }
+
+    const user = users[0];
+
+    // 2. Buat Kode OTP 6 Digit Angka
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // 3. Simpan OTP ke memory (otpStore) agar bisa dicek oleh fungsi resetPassword nanti
+    const expiresAt = Date.now() + 5 * 60 * 1000; // Kadaluarsa dalam 5 menit
+    otpStore.set(email.toLowerCase(), { code: otp, email: email.toLowerCase(), verified: false, expiresAt });
+
+    // 4. Print ke terminal (Biar kamu tidak perlu nunggu email masuk saat testing!)
+    console.log(`\n========================================`);
+    console.log(`[DEV OTP] Kode OTP untuk ${email}: ${otp}`);
+    console.log(`========================================\n`);
+
+    // 5. Kirim OTP via Email
+    const mailOptions = {
+      from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER']}>`,
+      to: email,
+      subject: 'Kode OTP Verifikasi Lupa Kata Sandi - DinoyoCraft',
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
+          <h2 style="color: #333;">Permintaan Reset Kata Sandi</h2>
+          <p>Halo ${user.name},</p>
+          <p>Kami menerima permintaan untuk mereset kata sandi akun DinoyoCraft Anda. Berikut adalah kode OTP Anda:</p>
+          <h1 style="background-color: #e5e7eb; padding: 10px; text-align: center; letter-spacing: 5px; font-size: 32px; color: #1f2937; border-radius: 8px;">${otp}</h1>
+          <p style="color: #ef4444; font-size: 14px;">Kode ini hanya berlaku selama 5 menit.</p>
+          <p>Jika Anda tidak meminta reset kata sandi, abaikan email ini.</p>
+        </div>
+      `,
+    };
+
+    // Kirim jika konfigurasi email terisi
+    if (process.env['EMAIL_USER'] && process.env['EMAIL_PASS'] && process.env['EMAIL_PASS'] !== 'xxxx xxxx xxxx xxxx') {
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log(`✅ [OTP] Email OTP berhasil dikirim ke ${email}`);
+      } catch (mailError) {
+        console.error('⚠️ [OTP] Gagal mengirim email via Nodemailer:', mailError);
+      }
+    } else {
+      console.log('⚠️ [OTP] EMAIL_USER/EMAIL_PASS belum dikonfigurasi. Gunakan kode OTP dari log terminal di atas.');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Instruksi reset kata sandi telah dikirimkan ke ${email}`,
+    });
+    return;
+  } catch (error: any) {
+    console.error('Error forgot password:', error);
+    res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat mengirim email' });
+    return;
+  }
+};
+
+// ============================================================
+// VERIFY OTP — Validasi kode OTP yang dimasukkan user
+// ============================================================
+export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      res.status(400).json({ success: false, message: 'Email dan kode OTP wajib diisi' });
+      return;
+    }
+
+    const entry = otpStore.get(email.toLowerCase());
+
+    if (!entry) {
+      res.status(400).json({
+        success: false,
+        message: 'Kode OTP tidak ditemukan. Silakan minta kode OTP baru.',
+      });
+      return;
+    }
+
+    if (Date.now() > entry.expiresAt) {
+      otpStore.delete(email.toLowerCase());
+      res.status(400).json({
+        success: false,
+        message: 'Kode OTP telah kedaluwarsa. Silakan minta kode OTP baru.',
+      });
+      return;
+    }
+
+    if (entry.code !== otp) {
+      res.status(400).json({
+        success: false,
+        message: 'Kode OTP salah. Periksa kembali kode yang Anda masukkan.',
+      });
+      return;
+    }
+
+    // Tandai OTP sebagai verified
+    entry.verified = true;
+    otpStore.set(email.toLowerCase(), entry);
+
+    res.status(200).json({
+      success: true,
+      message: 'Kode OTP berhasil diverifikasi!',
+    });
+    return;
+  } catch (error: any) {
+    console.error('Error verify OTP:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan pada server',
+    });
+    return;
+  }
+};
+
+// ============================================================
+// RESET PASSWORD — Ubah kata sandi setelah OTP terverifikasi
+// ============================================================
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, newPassword, otp } = req.body;
+
+    if (!email || !newPassword) {
+      res.status(400).json({ success: false, message: 'Email dan kata sandi baru wajib diisi' });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      res.status(400).json({ success: false, message: 'Kata sandi minimal 8 karakter' });
+      return;
+    }
+
+    // Cek OTP terverifikasi atau kode OTP cocok
+    const entry = otpStore.get(email.toLowerCase());
+    const isOtpValid = entry && (entry.verified || (otp && entry.code === otp));
+
+    if (!entry || !isOtpValid) {
+      res.status(400).json({
+        success: false,
+        message: 'OTP belum diverifikasi atau tidak valid. Silakan verifikasi OTP terlebih dahulu.',
+      });
+      return;
+    }
+
+    if (Date.now() > entry.expiresAt) {
+      otpStore.delete(email.toLowerCase());
+      res.status(400).json({
+        success: false,
+        message: 'Sesi reset telah kedaluwarsa. Silakan ulangi proses dari awal.',
+      });
+      return;
+    }
+
+    const [users]: any = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    if (!users || users.length === 0) {
+      res.status(404).json({ success: false, message: 'Akun dengan email tersebut tidak ditemukan' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.query('UPDATE users SET password_hash = ? WHERE email = ?', [passwordHash, email]);
+
+    // Hapus OTP dari store setelah berhasil reset
+    otpStore.delete(email.toLowerCase());
+
+    res.status(200).json({
+      success: true,
+      message: 'Kata sandi berhasil diperbarui',
+    });
+    return;
+  } catch (error: any) {
+    console.error('Error reset password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan pada server',
+    });
+    return;
+  }
+};
+
