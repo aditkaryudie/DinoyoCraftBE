@@ -10,6 +10,13 @@ import { validateBody } from '../middlewares/validatorMiddleware.js';
 
 const router = Router();
 
+/**
+ * @route   GET /api/admin/dashboard-stats
+ * @desc    Mendapatkan ringkasan statistik dan aktivitas dashboard admin
+ * @access  Admin (atau public untuk dev/test)
+ */
+router.get('/dashboard-stats', adminController.getDashboardStats);
+
 // Semua route di bawah ini memerlukan autentikasi + role admin
 router.use(verifyToken, requireRole(['admin']));
 
