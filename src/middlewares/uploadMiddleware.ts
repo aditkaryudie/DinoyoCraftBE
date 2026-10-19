@@ -31,3 +31,6 @@ export const uploadProfileImages = multer({ storage }).fields([
   { name: 'avatar', maxCount: 1 },
   { name: 'banner', maxCount: 1 },
 ]);
+
+const upload = multer({ storage });
+export default upload;

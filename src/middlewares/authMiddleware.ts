@@ -44,6 +44,7 @@ export const verifyToken = (
     res.locals['userId'] = decoded.userId;
     res.locals['email'] = decoded.email;
     res.locals['role'] = decoded.role;
+    req.user = { id: decoded.userId, ...decoded };
 
     next();
   } catch (err) {

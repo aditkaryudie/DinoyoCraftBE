@@ -406,7 +406,15 @@ export const updateProfile = async (req: Request, res: Response) => {
     const userId = res.locals['userId'];
     if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
-    const { ownerName, storeName, phone, address, yearStarted, description, website, instagram } = req.body;
+    const ownerName = req.body.ownerName ?? req.body.nama;
+    const storeName = req.body.storeName ?? req.body.nama_toko;
+    const phone = req.body.phone ?? req.body.whatsapp_number;
+    const address = req.body.address ?? req.body.alamat ?? req.body.workshop_address;
+    const yearStarted = req.body.yearStarted ?? req.body.tahun_mulai ?? req.body.started_year;
+    const description = req.body.description ?? req.body.deskripsi;
+    const website = req.body.website;
+    const instagram = req.body.instagram;
+
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
     const avatarPath = files?.['avatar']?.[0] ? `/uploads/${files['avatar'][0].filename}` : null;
@@ -415,27 +423,77 @@ export const updateProfile = async (req: Request, res: Response) => {
     // Update nama & avatar_url di tabel users
     await db.query(
       `UPDATE users 
-       SET name = ?, 
+       SET name = COALESCE(?, name), 
            avatar_url = COALESCE(?, avatar_url) 
        WHERE id = ?`,
-      [ownerName, avatarPath, userId]
+      [ownerName ?? null, avatarPath, userId]
     );
 
-    // Update profil mitra di tabel mitra_profiles
-    await db.query(
-      `UPDATE mitra_profiles 
-       SET store_name = ?, whatsapp_number = ?, workshop_address = ?, started_year = ?,
-           description = ?, website = ?, instagram = ?,
-           banner_url = COALESCE(?, banner_url)
-       WHERE user_id = ?`,
-      [
-        storeName, phone, address, yearStarted,
-        description, website, instagram,
-        bannerPath, userId
-      ]
+    // Periksa apakah profil mitra sudah ada di tabel mitra_profiles
+    const [checkProfile]: any = await db.query('SELECT id FROM mitra_profiles WHERE user_id = ?', [userId]);
+
+    if (checkProfile && checkProfile.length > 0) {
+      // Update profil mitra di tabel mitra_profiles
+      await db.query(
+        `UPDATE mitra_profiles 
+         SET store_name = COALESCE(?, store_name), 
+             whatsapp_number = COALESCE(?, whatsapp_number), 
+             workshop_address = COALESCE(?, workshop_address), 
+             started_year = COALESCE(?, started_year),
+             description = COALESCE(?, description), 
+             website = COALESCE(?, website), 
+             instagram = COALESCE(?, instagram),
+             banner_url = COALESCE(?, banner_url)
+         WHERE user_id = ?`,
+        [
+          storeName ?? null,
+          phone ?? null,
+          address ?? null,
+          yearStarted ? parseInt(String(yearStarted), 10) : null,
+          description ?? null,
+          website ?? null,
+          instagram ?? null,
+          bannerPath,
+          userId
+        ]
+      );
+    } else {
+      // Buat baru jika belum ada
+      await db.query(
+        `INSERT INTO mitra_profiles 
+         (user_id, store_name, whatsapp_number, workshop_address, started_year, description, website, instagram, banner_url, is_verified, is_active) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+        [
+          userId,
+          storeName ?? null,
+          phone ?? null,
+          address ?? null,
+          yearStarted ? parseInt(String(yearStarted), 10) : null,
+          description ?? null,
+          website ?? null,
+          instagram ?? null,
+          bannerPath
+        ]
+      );
+    }
+
+    // Ambil data profil terbaru
+    const [rows]: any = await db.query(
+      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+              m.store_name, m.whatsapp_number, m.workshop_address, 
+              m.started_year, m.description, m.website, m.instagram, 
+              m.banner_url, m.is_verified
+       FROM users u
+       LEFT JOIN mitra_profiles m ON u.id = m.user_id
+       WHERE u.id = ?`,
+      [userId]
     );
 
-    return res.status(200).json({ success: true, message: 'Profil berhasil diperbarui' });
+    return res.status(200).json({
+      success: true,
+      message: 'Profil berhasil diperbarui',
+      data: rows && rows.length > 0 ? rows[0] : null
+    });
   } catch (error) {
     console.error('Error updateProfile:', error);
     return res.status(500).json({ success: false, message: 'Gagal memperbarui profil' });

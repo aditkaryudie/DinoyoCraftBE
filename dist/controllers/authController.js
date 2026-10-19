@@ -1,0 +1,573 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.resetPassword = exports.verifyOtp = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.googleLogin = exports.loginMitra = exports.registerMitra = void 0;
+const bcrypt_1 = __importDefault(require("bcrypt"));
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const google_auth_library_1 = require("google-auth-library");
+const database_1 = __importDefault(require("../config/database"));
+const nodemailer_1 = __importDefault(require("nodemailer"));
+const registerMitra = async (req, res) => {
+    const connection = await database_1.default.getConnection();
+    try {
+        await connection.beginTransaction();
+        const { name, email, password, whatsapp_number, store_name, workshop_address, started_year } = req.body;
+        const files = req.files;
+        if (!name || !email || !whatsapp_number || !store_name || !workshop_address) {
+            await connection.rollback();
+            res.status(400).json({ message: 'Semua data teks wajib diisi' });
+            return;
+        }
+        if (!files || !files.ktp_file || !files.nib_file || !files.product_images) {
+            await connection.rollback();
+            res.status(400).json({ message: 'File KTP, NIB, dan Foto Produk wajib diunggah' });
+            return;
+        }
+        const [existingUsers] = await connection.query('SELECT id, role FROM users WHERE email = ?', [email]);
+        let newUserId;
+        if (existingUsers.length > 0) {
+            const existingUser = existingUsers[0];
+            const [existingProfile] = await connection.query('SELECT id, ktp_file_url FROM mitra_profiles WHERE user_id = ?', [existingUser.id]);
+            if (existingProfile.length > 0 && existingProfile[0].ktp_file_url) {
+                await connection.rollback();
+                res.status(409).json({ message: 'Email sudah terdaftar sebagai Mitra' });
+                return;
+            }
+            newUserId = existingUser.id;
+            if (password) {
+                const passwordHash = await bcrypt_1.default.hash(password, 10);
+                await connection.query('UPDATE users SET name = ?, password_hash = ? WHERE id = ?', [name, passwordHash, newUserId]);
+            }
+            else {
+                await connection.query('UPDATE users SET name = ? WHERE id = ?', [name, newUserId]);
+            }
+        }
+        else {
+            const passwordHash = password ? await bcrypt_1.default.hash(password, 10) : null;
+            const [userResult] = await connection.query('INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?)', [name, email, passwordHash, 'mitra', 1]);
+            newUserId = userResult.insertId;
+        }
+        const ktpUrl = `/uploads/${files.ktp_file[0].filename}`;
+        const nibUrl = `/uploads/${files.nib_file[0].filename}`;
+        const productImagesUrls = files.product_images.map(file => `/uploads/${file.filename}`);
+        const [checkProfile] = await connection.query('SELECT id FROM mitra_profiles WHERE user_id = ?', [newUserId]);
+        if (checkProfile.length > 0) {
+            await connection.query(`UPDATE mitra_profiles SET 
+         whatsapp_number = ?, store_name = ?, workshop_address = ?, started_year = ?, 
+         ktp_file_url = ?, nib_file_url = ?, sample_product_images = ?, is_verified = 0, is_active = 1
+         WHERE user_id = ?`, [
+                whatsapp_number,
+                store_name,
+                workshop_address,
+                started_year || null,
+                ktpUrl,
+                nibUrl,
+                JSON.stringify(productImagesUrls),
+                newUserId
+            ]);
+        }
+        else {
+            await connection.query(`INSERT INTO mitra_profiles 
+         (user_id, whatsapp_number, store_name, workshop_address, started_year, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)`, [
+                newUserId,
+                whatsapp_number,
+                store_name,
+                workshop_address,
+                started_year || null,
+                ktpUrl,
+                nibUrl,
+                JSON.stringify(productImagesUrls)
+            ]);
+        }
+        await connection.commit();
+        res.status(201).json({
+            message: 'Registrasi Mitra berhasil! Menunggu verifikasi admin.',
+        });
+        return;
+    }
+    catch (error) {
+        await connection.rollback();
+        console.error('Error register mitra:', error);
+        res.status(500).json({ message: 'Terjadi kesalahan pada server' });
+        return;
+    }
+    finally {
+        connection.release();
+    }
+};
+exports.registerMitra = registerMitra;
+const loginMitra = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            res.status(400).json({ message: 'Email dan password wajib diisi' });
+            return;
+        }
+        const query = `
+      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
+             m.store_name, m.is_verified 
+      FROM users u 
+      LEFT JOIN mitra_profiles m ON u.id = m.user_id 
+      WHERE u.email = ?
+    `;
+        const [users] = await database_1.default.query(query, [email]);
+        if (users.length === 0) {
+            res.status(401).json({ message: 'Email atau password salah' });
+            return;
+        }
+        const user = users[0];
+        if (user.role !== 'mitra' && user.role !== 'admin') {
+            res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra.' });
+            return;
+        }
+        if (user.is_active === 0) {
+            res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+            return;
+        }
+        // ============================================================
+        // 🔒 PROTEKSI VERIFIKASI MITRA (TAMBAHAN LOGIK)
+        // ============================================================
+        if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
+            res.status(403).json({
+                message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
+            });
+            return;
+        }
+        if (!user.password_hash) {
+            res.status(400).json({ message: 'Akun ini terdaftar melalui Google. Silakan masuk menggunakan Google.' });
+            return;
+        }
+        const isMatch = await bcrypt_1.default.compare(password, user.password_hash);
+        if (!isMatch) {
+            res.status(401).json({ message: 'Email atau password salah' });
+            return;
+        }
+        const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+        const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+        const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn });
+        res.status(200).json({
+            message: 'Login berhasil!',
+            token,
+            data: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                store_name: user.store_name,
+                is_verified: user.is_verified
+            }
+        });
+        return;
+    }
+    catch (error) {
+        console.error('Error login mitra:', error);
+        res.status(500).json({ message: 'Terjadi kesalahan pada server saat login' });
+        return;
+    }
+};
+exports.loginMitra = loginMitra;
+const googleLogin = async (req, res) => {
+    try {
+        const { credential, userInfo } = req.body;
+        if (!credential && !userInfo) {
+            res.status(400).json({ message: 'Data otentikasi Google wajib dikirim' });
+            return;
+        }
+        let email = '';
+        let name = '';
+        let googleId = '';
+        let avatarUrl = null;
+        if (credential) {
+            try {
+                const client = new google_auth_library_1.OAuth2Client(process.env['GOOGLE_CLIENT_ID']);
+                const ticket = await client.verifyIdToken({
+                    idToken: credential,
+                    audience: process.env['GOOGLE_CLIENT_ID'],
+                });
+                const payload = ticket.getPayload();
+                if (payload && payload.email) {
+                    email = payload.email;
+                    name = payload.name || payload.given_name || 'Pengguna Google';
+                    googleId = payload.sub;
+                    avatarUrl = payload.picture || null;
+                }
+            }
+            catch (verifyError) {
+                console.warn('Google verifyIdToken failed, attempting JWT decode fallback:', verifyError);
+                try {
+                    const parts = credential.split('.');
+                    if (parts.length === 3) {
+                        const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                        if (decoded && decoded.email) {
+                            email = decoded.email;
+                            name = decoded.name || decoded.given_name || 'Pengguna Google';
+                            googleId = decoded.sub || '';
+                            avatarUrl = decoded.picture || null;
+                        }
+                    }
+                }
+                catch (decodeErr) {
+                    console.error('Failed to decode Google token:', decodeErr);
+                }
+            }
+        }
+        else if (userInfo && userInfo.email) {
+            email = userInfo.email;
+            name = userInfo.name || 'Pengguna Google';
+            googleId = userInfo.sub || userInfo.id || '';
+            avatarUrl = userInfo.picture || null;
+        }
+        if (!email) {
+            res.status(400).json({ message: 'Gagal mendapatkan data akun dari Google' });
+            return;
+        }
+        const query = `
+      SELECT u.id, u.name, u.email, u.role, u.is_active, u.google_id, u.avatar_url,
+             m.store_name, m.is_verified 
+      FROM users u 
+      LEFT JOIN mitra_profiles m ON u.id = m.user_id 
+      WHERE (u.google_id IS NOT NULL AND u.google_id = ?) OR u.email = ?
+      LIMIT 1
+    `;
+        const [users] = await database_1.default.query(query, [googleId || 'NON_EXISTENT_ID', email]);
+        let user;
+        if (users.length > 0) {
+            user = users[0];
+            if (user.is_active === 0) {
+                res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+                return;
+            }
+            if (user.role !== 'mitra' && user.role !== 'admin') {
+                res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra atau Admin.' });
+                return;
+            }
+            if (!user.google_id || !user.avatar_url) {
+                await database_1.default.query('UPDATE users SET google_id = COALESCE(google_id, ?), avatar_url = COALESCE(avatar_url, ?) WHERE id = ?', [googleId || null, avatarUrl || null, user.id]);
+            }
+        }
+        else {
+            const connection = await database_1.default.getConnection();
+            try {
+                await connection.beginTransaction();
+                const [insertUser] = await connection.query('INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, NULL, ?, 1, ?, ?)', [name, email, 'mitra', googleId || null, avatarUrl || null]);
+                const newUserId = insertUser.insertId;
+                await connection.query(`INSERT INTO mitra_profiles 
+           (user_id, whatsapp_number, store_name, workshop_address, started_year, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)`, [
+                    newUserId,
+                    '-',
+                    'Toko ' + name,
+                    '-',
+                    new Date().getFullYear(),
+                    '',
+                    '',
+                    '[]'
+                ]);
+                await connection.commit();
+                user = {
+                    id: newUserId,
+                    name,
+                    email,
+                    role: 'mitra',
+                    store_name: 'Toko ' + name,
+                    is_verified: 0,
+                    avatar_url: avatarUrl
+                };
+            }
+            catch (insertErr) {
+                await connection.rollback();
+                throw insertErr;
+            }
+            finally {
+                connection.release();
+            }
+        }
+        // ============================================================
+        // 🔒 PROTEKSI VERIFIKASI MITRA UNTUK GOOGLE LOGIN
+        // ============================================================
+        if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
+            res.status(403).json({
+                message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
+            });
+            return;
+        }
+        const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+        const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+        const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn });
+        res.status(200).json({
+            message: 'Login dengan Google berhasil!',
+            token,
+            data: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                store_name: user.store_name,
+                is_verified: user.is_verified,
+                avatar_url: user.avatar_url || avatarUrl
+            }
+        });
+        return;
+    }
+    catch (error) {
+        console.error('Error google login:', error);
+        res.status(500).json({ message: 'Terjadi kesalahan pada server saat login dengan Google' });
+        return;
+    }
+};
+exports.googleLogin = googleLogin;
+const getProfile = async (_req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        if (!userId)
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const [rows] = await database_1.default.query(`SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+              m.store_name, m.whatsapp_number, m.workshop_address, 
+              m.started_year, m.description, m.website, m.instagram, 
+              m.banner_url, m.is_verified
+       FROM users u
+       LEFT JOIN mitra_profiles m ON u.id = m.user_id
+       WHERE u.id = ?`, [userId]);
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
+        }
+        return res.status(200).json({ success: true, data: rows[0] });
+    }
+    catch (error) {
+        console.error('Error getProfile:', error);
+        return res.status(500).json({ success: false, message: 'Terjadi kesalahan server' });
+    }
+};
+exports.getProfile = getProfile;
+const updateProfile = async (req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        if (!userId)
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const { ownerName, storeName, phone, address, yearStarted, description, website, instagram } = req.body;
+        const files = req.files;
+        const avatarPath = files?.['avatar']?.[0] ? `/uploads/${files['avatar'][0].filename}` : null;
+        const bannerPath = files?.['banner']?.[0] ? `/uploads/${files['banner'][0].filename}` : null;
+        // Update nama & avatar_url di tabel users
+        await database_1.default.query(`UPDATE users 
+       SET name = ?, 
+           avatar_url = COALESCE(?, avatar_url) 
+       WHERE id = ?`, [ownerName, avatarPath, userId]);
+        // Update profil mitra di tabel mitra_profiles
+        await database_1.default.query(`UPDATE mitra_profiles 
+       SET store_name = ?, whatsapp_number = ?, workshop_address = ?, started_year = ?,
+           description = ?, website = ?, instagram = ?,
+           banner_url = COALESCE(?, banner_url)
+       WHERE user_id = ?`, [
+            storeName, phone, address, yearStarted,
+            description, website, instagram,
+            bannerPath, userId
+        ]);
+        return res.status(200).json({ success: true, message: 'Profil berhasil diperbarui' });
+    }
+    catch (error) {
+        console.error('Error updateProfile:', error);
+        return res.status(500).json({ success: false, message: 'Gagal memperbarui profil' });
+    }
+};
+exports.updateProfile = updateProfile;
+const otpStore = new Map();
+// Bersihkan OTP expired setiap 10 menit
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of otpStore.entries()) {
+        if (now > entry.expiresAt) {
+            otpStore.delete(key);
+        }
+    }
+}, 10 * 60 * 1000);
+// Konfigurasi Email Pengirim
+const transporter = nodemailer_1.default.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env['EMAIL_USER'],
+        pass: process.env['EMAIL_PASS'], // Pastikan pakai 16-digit App Password dari Google
+    },
+});
+// ============================================================
+// FORGOT PASSWORD — Kirim OTP ke email user
+// ============================================================
+const forgotPassword = async (req, res) => {
+    console.log("=== API FORGOT PASSWORD DI-HIT ===", req.body);
+    try {
+        const { email } = req.body;
+        if (!email) {
+            res.status(400).json({ success: false, message: 'Email wajib diisi' });
+            return;
+        }
+        // 1. Cek apakah user ada di database
+        const [users] = await database_1.default.query('SELECT id, name, email FROM users WHERE email = ?', [email]);
+        if (!users || users.length === 0) {
+            res.status(404).json({ success: false, message: 'Akun dengan email tersebut tidak ditemukan.' });
+            return;
+        }
+        const user = users[0];
+        // 2. Buat Kode OTP 6 Digit Angka
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // 3. Simpan OTP ke memory (otpStore) agar bisa dicek oleh fungsi resetPassword nanti
+        const expiresAt = Date.now() + 5 * 60 * 1000; // Kadaluarsa dalam 5 menit
+        otpStore.set(email.toLowerCase(), { code: otp, email: email.toLowerCase(), verified: false, expiresAt });
+        // 4. Print ke terminal (Biar kamu tidak perlu nunggu email masuk saat testing!)
+        console.log(`\n========================================`);
+        console.log(`[DEV OTP] Kode OTP untuk ${email}: ${otp}`);
+        console.log(`========================================\n`);
+        // 5. Kirim OTP via Email
+        const mailOptions = {
+            from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER']}>`,
+            to: email,
+            subject: 'Kode OTP Verifikasi Lupa Kata Sandi - DinoyoCraft',
+            html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
+          <h2 style="color: #333;">Permintaan Reset Kata Sandi</h2>
+          <p>Halo ${user.name},</p>
+          <p>Kami menerima permintaan untuk mereset kata sandi akun DinoyoCraft Anda. Berikut adalah kode OTP Anda:</p>
+          <h1 style="background-color: #e5e7eb; padding: 10px; text-align: center; letter-spacing: 5px; font-size: 32px; color: #1f2937; border-radius: 8px;">${otp}</h1>
+          <p style="color: #ef4444; font-size: 14px;">Kode ini hanya berlaku selama 5 menit.</p>
+          <p>Jika Anda tidak meminta reset kata sandi, abaikan email ini.</p>
+        </div>
+      `,
+        };
+        // Kirim jika konfigurasi email terisi
+        if (process.env['EMAIL_USER'] && process.env['EMAIL_PASS'] && process.env['EMAIL_PASS'] !== 'xxxx xxxx xxxx xxxx') {
+            try {
+                await transporter.sendMail(mailOptions);
+                console.log(`✅ [OTP] Email OTP berhasil dikirim ke ${email}`);
+            }
+            catch (mailError) {
+                console.error('⚠️ [OTP] Gagal mengirim email via Nodemailer:', mailError);
+            }
+        }
+        else {
+            console.log('⚠️ [OTP] EMAIL_USER/EMAIL_PASS belum dikonfigurasi. Gunakan kode OTP dari log terminal di atas.');
+        }
+        res.status(200).json({
+            success: true,
+            message: `Instruksi reset kata sandi telah dikirimkan ke ${email}`,
+        });
+        return;
+    }
+    catch (error) {
+        console.error('Error forgot password:', error);
+        res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat mengirim email' });
+        return;
+    }
+};
+exports.forgotPassword = forgotPassword;
+// ============================================================
+// VERIFY OTP — Validasi kode OTP yang dimasukkan user
+// ============================================================
+const verifyOtp = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        if (!email || !otp) {
+            res.status(400).json({ success: false, message: 'Email dan kode OTP wajib diisi' });
+            return;
+        }
+        const entry = otpStore.get(email.toLowerCase());
+        if (!entry) {
+            res.status(400).json({
+                success: false,
+                message: 'Kode OTP tidak ditemukan. Silakan minta kode OTP baru.',
+            });
+            return;
+        }
+        if (Date.now() > entry.expiresAt) {
+            otpStore.delete(email.toLowerCase());
+            res.status(400).json({
+                success: false,
+                message: 'Kode OTP telah kedaluwarsa. Silakan minta kode OTP baru.',
+            });
+            return;
+        }
+        if (entry.code !== otp) {
+            res.status(400).json({
+                success: false,
+                message: 'Kode OTP salah. Periksa kembali kode yang Anda masukkan.',
+            });
+            return;
+        }
+        // Tandai OTP sebagai verified
+        entry.verified = true;
+        otpStore.set(email.toLowerCase(), entry);
+        res.status(200).json({
+            success: true,
+            message: 'Kode OTP berhasil diverifikasi!',
+        });
+        return;
+    }
+    catch (error) {
+        console.error('Error verify OTP:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Terjadi kesalahan pada server',
+        });
+        return;
+    }
+};
+exports.verifyOtp = verifyOtp;
+// ============================================================
+// RESET PASSWORD — Ubah kata sandi setelah OTP terverifikasi
+// ============================================================
+const resetPassword = async (req, res) => {
+    try {
+        const { email, newPassword, otp } = req.body;
+        if (!email || !newPassword) {
+            res.status(400).json({ success: false, message: 'Email dan kata sandi baru wajib diisi' });
+            return;
+        }
+        if (newPassword.length < 8) {
+            res.status(400).json({ success: false, message: 'Kata sandi minimal 8 karakter' });
+            return;
+        }
+        // Cek OTP terverifikasi atau kode OTP cocok
+        const entry = otpStore.get(email.toLowerCase());
+        const isOtpValid = entry && (entry.verified || (otp && entry.code === otp));
+        if (!entry || !isOtpValid) {
+            res.status(400).json({
+                success: false,
+                message: 'OTP belum diverifikasi atau tidak valid. Silakan verifikasi OTP terlebih dahulu.',
+            });
+            return;
+        }
+        if (Date.now() > entry.expiresAt) {
+            otpStore.delete(email.toLowerCase());
+            res.status(400).json({
+                success: false,
+                message: 'Sesi reset telah kedaluwarsa. Silakan ulangi proses dari awal.',
+            });
+            return;
+        }
+        const [users] = await database_1.default.query('SELECT id FROM users WHERE email = ?', [email]);
+        if (!users || users.length === 0) {
+            res.status(404).json({ success: false, message: 'Akun dengan email tersebut tidak ditemukan' });
+            return;
+        }
+        const passwordHash = await bcrypt_1.default.hash(newPassword, 10);
+        await database_1.default.query('UPDATE users SET password_hash = ? WHERE email = ?', [passwordHash, email]);
+        // Hapus OTP dari store setelah berhasil reset
+        otpStore.delete(email.toLowerCase());
+        res.status(200).json({
+            success: true,
+            message: 'Kata sandi berhasil diperbarui',
+        });
+        return;
+    }
+    catch (error) {
+        console.error('Error reset password:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Terjadi kesalahan pada server',
+        });
+        return;
+    }
+};
+exports.resetPassword = resetPassword;
+//# sourceMappingURL=authController.js.map

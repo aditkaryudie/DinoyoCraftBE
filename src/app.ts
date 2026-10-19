@@ -9,7 +9,8 @@ import dotenv from 'dotenv';
 import router from './routes/index.js';
 import { notFound, globalErrorHandler } from './middlewares/errorMiddleware.js';
 import { auditLogger } from './middlewares/auditMiddleware.js';
-import authRoutes from './routes/authRoutes';
+import authRoutes from './routes/authRoutes.js';
+import productRoutes from './routes/productRoutes.js';
 import path from 'path';
 
 // Load environment variables SEBELUM apapun
@@ -89,6 +90,7 @@ app.use('/uploads', express.static(targetFolder));
 
 // Rute Utama
 app.use('/api/auth', authRoutes);
+app.use('/api/products', productRoutes);
 
 // -------------------------------------------------------
 // 6. Router Utama
