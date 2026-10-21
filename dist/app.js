@@ -13,7 +13,9 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const index_js_1 = __importDefault(require("./routes/index.js"));
 const errorMiddleware_js_1 = require("./middlewares/errorMiddleware.js");
 const auditMiddleware_js_1 = require("./middlewares/auditMiddleware.js");
-const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
+const authRoutes_js_1 = __importDefault(require("./routes/authRoutes.js"));
+const productRoutes_js_1 = __importDefault(require("./routes/productRoutes.js"));
+const mitraRoutes_js_1 = __importDefault(require("./routes/mitraRoutes.js"));
 const path_1 = __importDefault(require("path"));
 // Load environment variables SEBELUM apapun
 dotenv_1.default.config();
@@ -78,7 +80,9 @@ console.log('📂 Static Server membaca dari:', targetFolder);
 // 3. Pasang middleware statis (HARUS DI ATAS app.use('/api/...'))
 app.use('/uploads', express_1.default.static(targetFolder));
 // Rute Utama
-app.use('/api/auth', authRoutes_1.default);
+app.use('/api/auth', authRoutes_js_1.default);
+app.use('/api/products', productRoutes_js_1.default);
+app.use('/api/mitra', mitraRoutes_js_1.default);
 // -------------------------------------------------------
 // 6. Router Utama
 // -------------------------------------------------------

@@ -8,6 +8,7 @@ import authRoutes from './authRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import aiRoutes from './aiRoutes.js';
 import productRoutes from './productRoutes.js';
+import mitraRoutes from './mitraRoutes.js';
 
 const router = Router();
 
@@ -15,5 +16,6 @@ router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
 router.use('/ai', aiRoutes);
 router.use('/products', productRoutes);
+router.use('/mitra', mitraRoutes);
 
 export default router;

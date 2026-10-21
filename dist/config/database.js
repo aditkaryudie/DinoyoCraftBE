@@ -17,6 +17,7 @@ const pool = promise_1.default.createPool({
     user: process.env['DB_USERNAME'] ?? 'root',
     password: process.env['DB_PASSWORD'] ?? '',
     database: process.env['DB_DATABASE'] ?? 'dinoyocraft_db',
+    multipleStatements: true,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,

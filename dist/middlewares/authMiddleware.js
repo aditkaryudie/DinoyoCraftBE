@@ -20,14 +20,25 @@ if (!JWT_SECRET) {
  * memverifikasi signature, lalu menyimpan payload ke res.locals.
  */
 const verifyToken = (req, res, next) => {
+    let token;
     const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        (0, response_js_1.sendUnauthorized)(res, 'Token autentikasi tidak ditemukan atau format salah.');
-        return;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
     }
-    const token = authHeader.split(' ')[1];
+    else if (req.headers.cookie) {
+        const cookies = req.headers.cookie.split(';');
+        for (const cookie of cookies) {
+            const parts = cookie.trim().split('=');
+            const name = parts[0];
+            const val = parts.slice(1).join('=');
+            if (name === 'token' || name === 'jwt' || name === 'accessToken') {
+                token = decodeURIComponent(val);
+                break;
+            }
+        }
+    }
     if (!token) {
-        (0, response_js_1.sendUnauthorized)(res, 'Token kosong.');
+        (0, response_js_1.sendUnauthorized)(res, 'Token autentikasi tidak ditemukan atau format salah.');
         return;
     }
     try {
@@ -36,6 +47,7 @@ const verifyToken = (req, res, next) => {
         res.locals['userId'] = decoded.userId;
         res.locals['email'] = decoded.email;
         res.locals['role'] = decoded.role;
+        req.user = { id: decoded.userId, ...decoded };
         next();
     }
     catch (err) {

@@ -32,4 +32,6 @@ exports.uploadProfileImages = (0, multer_1.default)({ storage }).fields([
     { name: 'avatar', maxCount: 1 },
     { name: 'banner', maxCount: 1 },
 ]);
+const upload = (0, multer_1.default)({ storage });
+exports.default = upload;
 //# sourceMappingURL=uploadMiddleware.js.map

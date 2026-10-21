@@ -23,17 +23,26 @@ export const verifyToken = (
   res: Response,
   next: NextFunction
 ): void => {
+  let token: string | undefined;
   const authHeader = req.headers['authorization'];
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    sendUnauthorized(res, 'Token autentikasi tidak ditemukan atau format salah.');
-    return;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.headers.cookie) {
+    const cookies = req.headers.cookie.split(';');
+    for (const cookie of cookies) {
+      const parts = cookie.trim().split('=');
+      const name = parts[0];
+      const val = parts.slice(1).join('=');
+      if (name === 'token' || name === 'jwt' || name === 'accessToken') {
+        token = decodeURIComponent(val);
+        break;
+      }
+    }
   }
 
-  const token = authHeader.split(' ')[1];
-
   if (!token) {
-    sendUnauthorized(res, 'Token kosong.');
+    sendUnauthorized(res, 'Token autentikasi tidak ditemukan atau format salah.');
     return;
   }
 

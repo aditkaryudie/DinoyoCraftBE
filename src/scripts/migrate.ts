@@ -47,6 +47,7 @@ const migrations = [
     \`website\` varchar(255) DEFAULT NULL,
     \`instagram\` varchar(100) DEFAULT NULL,
     \`banner_url\` varchar(500) DEFAULT NULL,
+    \`avatar_url\` varchar(500) DEFAULT NULL,
     \`ktp_file_url\` varchar(500) NOT NULL,
     \`nib_file_url\` varchar(500) NOT NULL,
     \`sample_product_images\` json NOT NULL,

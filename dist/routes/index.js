@@ -11,9 +11,13 @@ const express_1 = require("express");
 const authRoutes_js_1 = __importDefault(require("./authRoutes.js"));
 const adminRoutes_js_1 = __importDefault(require("./adminRoutes.js"));
 const aiRoutes_js_1 = __importDefault(require("./aiRoutes.js"));
+const productRoutes_js_1 = __importDefault(require("./productRoutes.js"));
+const mitraRoutes_js_1 = __importDefault(require("./mitraRoutes.js"));
 const router = (0, express_1.Router)();
 router.use('/auth', authRoutes_js_1.default);
 router.use('/admin', adminRoutes_js_1.default);
 router.use('/ai', aiRoutes_js_1.default);
+router.use('/products', productRoutes_js_1.default);
+router.use('/mitra', mitraRoutes_js_1.default);
 exports.default = router;
 //# sourceMappingURL=index.js.map

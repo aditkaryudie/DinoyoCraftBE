@@ -9,9 +9,6 @@ const router = (0, express_1.Router)();
 router.post('/register-mitra', uploadMiddleware_1.uploadMitraDocs, authController_1.registerMitra);
 router.post('/login-mitra', authController_1.loginMitra);
 router.post('/google-login', authController_1.googleLogin);
-// Pastikan baris ini ada dan tidak typo
-// Pastikan baris ini ada dan tidak typo
-// Ubah baris ini:
 router.post('/forgot-password', authController_1.forgotPassword);
 router.post('/verify-otp', authController_1.verifyOtp);
 router.post('/reset-password', authController_1.resetPassword);
