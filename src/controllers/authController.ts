@@ -101,14 +101,22 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
     await connection.commit();
 
     res.status(201).json({
+      success: true,
       message: 'Registrasi Mitra berhasil! Menunggu verifikasi admin.',
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
     return;
 
   } catch (error) {
     await connection.rollback();
     console.error('Error register mitra:', error);
-    res.status(500).json({ message: 'Terjadi kesalahan pada server' });
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan pada server',
+      meta: { timestamp: new Date().toISOString() }
+    });
     return;
   } finally {
     connection.release();
@@ -120,7 +128,11 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     const { email, password } = req.body;
 
     if (!email || !password) {
-      res.status(400).json({ message: 'Email dan password wajib diisi' });
+      res.status(400).json({
+        success: false,
+        message: 'Email dan password wajib diisi',
+        meta: { timestamp: new Date().toISOString() }
+      });
       return;
     }
 
@@ -134,19 +146,31 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     const [users]: any = await db.query(query, [email]);
 
     if (users.length === 0) {
-      res.status(401).json({ message: 'Email atau password salah' });
+      res.status(401).json({
+        success: false,
+        message: 'Email atau password salah',
+        meta: { timestamp: new Date().toISOString() }
+      });
       return;
     }
 
     const user = users[0];
 
     if (user.role !== 'mitra' && user.role !== 'admin') {
-      res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra.' });
+      res.status(403).json({
+        success: false,
+        message: 'Akses ditolak. Akun ini bukan akun Mitra.',
+        meta: { timestamp: new Date().toISOString() }
+      });
       return;
     }
 
     if (user.is_active === 0) {
-      res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+      res.status(403).json({
+        success: false,
+        message: 'Akun Anda sedang dinonaktifkan.',
+        meta: { timestamp: new Date().toISOString() }
+      });
       return;
     }
 
@@ -155,19 +179,29 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     // ============================================================
     if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
       res.status(403).json({
-        message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
+        success: false,
+        message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.',
+        meta: { timestamp: new Date().toISOString() }
       });
       return;
     }
 
     if (!user.password_hash) {
-      res.status(400).json({ message: 'Akun ini terdaftar melalui Google. Silakan masuk menggunakan Google.' });
+      res.status(400).json({
+        success: false,
+        message: 'Akun ini terdaftar melalui Google. Silakan masuk menggunakan Google.',
+        meta: { timestamp: new Date().toISOString() }
+      });
       return;
     }
 
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      res.status(401).json({ message: 'Email atau password salah' });
+      res.status(401).json({
+        success: false,
+        message: "Email atau password salah!",
+        meta: { timestamp: new Date().toISOString() }
+      });
       return;
     }
 
@@ -180,22 +214,24 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     );
 
     res.status(200).json({
-      message: 'Login berhasil!',
-      token,
+      success: true,
+      message: "Login berhasil!",
       data: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        store_name: user.store_name,
-        is_verified: user.is_verified
+        token: token
+      },
+      meta: {
+        timestamp: new Date().toISOString()
       }
     });
     return;
 
   } catch (error) {
     console.error('Error login mitra:', error);
-    res.status(500).json({ message: 'Terjadi kesalahan pada server saat login' });
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server.",
+      meta: { timestamp: new Date().toISOString() }
+    });
     return;
   }
 };
