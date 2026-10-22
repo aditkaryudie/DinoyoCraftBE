@@ -138,7 +138,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
 
     const query = `
       SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
-             m.store_name, m.is_verified 
+             m.store_name, m.is_verified, m.rejection_reason 
       FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE u.email = ?
@@ -177,14 +177,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     // ============================================================
     // 🔒 PROTEKSI VERIFIKASI MITRA (TAMBAHAN LOGIK)
     // ============================================================
-    if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
-      res.status(403).json({
-        success: false,
-        message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.',
-        meta: { timestamp: new Date().toISOString() }
-      });
-      return;
-    }
+    // Unverified / rejected mitra allowed to login to view profile and status
 
     if (!user.password_hash) {
       res.status(400).json({
@@ -230,7 +223,8 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
         email: user.email,
         role: user.role,
         store_name: user.store_name,
-        is_verified: user.is_verified
+        is_verified: user.is_verified,
+        rejection_reason: user.rejection_reason
       },
       meta: {
         timestamp: new Date().toISOString()
@@ -308,7 +302,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
 
     const query = `
       SELECT u.id, u.name, u.email, u.role, u.is_active, u.google_id, u.avatar_url,
-             m.store_name, m.is_verified 
+             m.store_name, m.is_verified, m.rejection_reason 
       FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE (u.google_id IS NOT NULL AND u.google_id = ?) OR u.email = ?
@@ -386,12 +380,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
     // ============================================================
     // 🔒 PROTEKSI VERIFIKASI MITRA UNTUK GOOGLE LOGIN
     // ============================================================
-    if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
-      res.status(403).json({
-        message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
-      });
-      return;
-    }
+    // Unverified / rejected mitra allowed to login via Google
 
     const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
     const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
@@ -420,6 +409,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
         role: user.role,
         store_name: user.store_name,
         is_verified: user.is_verified,
+        rejection_reason: user.rejection_reason,
         avatar_url: user.avatar_url || avatarUrl
       }
     });
@@ -441,7 +431,8 @@ export const getProfile = async (_req: Request, res: Response) => {
       `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
-              m.banner_url, m.is_verified
+              m.banner_url, m.is_verified, m.rejection_reason,
+              m.ktp_file_url, m.nib_file_url, m.sample_product_images
        FROM users u
        LEFT JOIN mitra_profiles m ON u.id = m.user_id
        WHERE u.id = ?`,
@@ -789,3 +780,57 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+
+
+export const reuploadDocs = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const ktpFile = files?.ktp_file?.[0];
+    const nibFile = files?.nib_file?.[0];
+    const productImages = files?.product_images;
+
+    if (!ktpFile && !nibFile && (!productImages || productImages.length === 0)) {
+      res.status(400).json({ success: false, message: 'Harap unggah minimal satu dokumen untuk diperbaiki.' });
+      return;
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [];
+
+    if (ktpFile) {
+      updates.push('ktp_file_url = ?');
+      params.push(`/uploads/${ktpFile.filename}`);
+    }
+    if (nibFile) {
+      updates.push('nib_file_url = ?');
+      params.push(`/uploads/${nibFile.filename}`);
+    }
+    if (productImages && productImages.length > 0) {
+      updates.push('sample_product_images = ?');
+      params.push(JSON.stringify(productImages.map(f => `/uploads/${f.filename}`)));
+    }
+
+    updates.push('is_verified = 0');
+    updates.push('is_active = 1');
+    updates.push('rejection_reason = NULL');
+    updates.push('updated_at = NOW()');
+
+    params.push(userId);
+
+    await db.query(`UPDATE mitra_profiles SET ${updates.join(', ')} WHERE user_id = ?`, params);
+
+    res.status(200).json({
+      success: true,
+      message: 'Dokumen berhasil diperbarui dan diajukan ulang untuk verifikasi admin!'
+    });
+  } catch (error) {
+    console.error('Error reuploadDocs:', error);
+    res.status(500).json({ success: false, message: 'Gagal memperbarui dokumen.' });
+  }
+};

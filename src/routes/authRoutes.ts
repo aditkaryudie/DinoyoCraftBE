@@ -7,7 +7,8 @@ import {
   updateProfile,
   forgotPassword,
   verifyOtp,
-  resetPassword
+  resetPassword,
+  reuploadDocs
 } from '../controllers/authController';
 // Gabungkan uploadProfileImages ke dalam import uploadMiddleware di bawah ini:
 import { uploadMitraDocs, uploadProfileImages } from '../middlewares/uploadMiddleware';
@@ -24,5 +25,6 @@ router.post('/verify-otp', verifyOtp);
 router.post('/reset-password', resetPassword);
 router.get('/profile', verifyToken, getProfile);
 router.put('/profile', verifyToken, uploadProfileImages, updateProfile);
+router.post('/reupload-docs', verifyToken, uploadMitraDocs, reuploadDocs);
 
 export default router;

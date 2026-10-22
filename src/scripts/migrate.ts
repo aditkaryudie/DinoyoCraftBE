@@ -202,7 +202,7 @@ const migrations = [
   // 3. SEEDING / INSERT DATA (DENGAN IGNORE AGAR AMAN JIKA DI-RUN ULANG)
   // ==========================================
   `INSERT IGNORE INTO \`users\` (\`id\`, \`name\`, \`email\`, \`password_hash\`, \`role\`, \`is_active\`, \`token_version\`, \`google_id\`, \`avatar_url\`, \`created_at\`, \`updated_at\`) VALUES
-  (1, 'Super Admin', 'admin@dinoyocraft.com', '$2a$12$I/yJhrmxLwKaFmg8RfScouTjVh9g631hmQb4ViQ5BDEd.UmBYH8dq', 'admin', 1, 0, NULL, NULL, '2026-10-10 23:32:11', '2026-10-11 18:54:07'),
+  (1, 'Super Admin', 'csdinoyocraft@gmail.com', '', 'b1, 'Super Admin', '0$wfcDxLuZWPYzSA5UeXj6HO2XU1xjLfaYD.fcGmH7I6fCsg8CZec2K', 'admin', 1, 0, NULL, NULL, '2026-10-10 23:32:11', '2026-10-11 18:54:07'),
   (34, 'Aditya Karyudie', 'aditkaryudie@gmail.com', NULL, 'admin', 1, 0, '117542459585763900953', 'https://lh3.googleusercontent.com/a/ACg8ocIAzCOQLXeIHKft2sNVvFmwz_YaS9Km1KUc9ETkS2heMDRDPgFZ=s96-c', '2026-10-16 16:59:37', '2026-10-17 11:59:42'),
   (37, 'Budi Pengrajin', 'budi.mitra@gmail.com', '$2b$10$x0QuoUd0WY8nt2DrNiXNle6oky6RUYlD0Yqpyo8upD0Mo6pOj6omO', 'mitra', 1, 0, NULL, NULL, '2026-10-17 13:46:53', '2026-10-17 14:03:42'),
   (39, 'aditya', 'labgame211@gmail.com', '$2b$10$BtunGZCkmNvbavfvFuuixeQl9HzcTGMP/hhPucYHr08G4SIO6C70C', 'mitra', 1, 0, NULL, '/uploads/1792404100146-791381469.png', '2026-10-19 10:36:01', '2026-10-19 17:01:51');`,

@@ -254,7 +254,8 @@ export const getVerifikasiList = async (_req: Request, res: Response): Promise<v
         m.instagram,
         m.ktp_file_url, 
         m.nib_file_url, 
-        m.is_verified, 
+        m.is_verified,
+          m.rejection_reason, 
         m.is_active, 
         m.created_at, 
         u.name AS owner_name, 
@@ -275,49 +276,49 @@ export const getVerifikasiList = async (_req: Request, res: Response): Promise<v
  * Setujui ('approved') atau tolak ('rejected') verifikasi toko mitra
  */
 export const verifyMitraStore = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const mitraId = parseInt((req.params as { id: string }).id ?? '0');
-    const { status } = req.body as { status: 'approved' | 'rejected' };
+    try {
+      const mitraId = parseInt((req.params as { id: string }).id ?? '0');
+      const { status, reason } = req.body as { status: 'approved' | 'rejected'; reason?: string };
 
-    if (!['approved', 'rejected'].includes(status)) {
-      sendBadRequest(res, "Status verifikasi harus 'approved' atau 'rejected'.");
-      return;
+      if (!['approved', 'rejected'].includes(status)) {
+        sendBadRequest(res, "Status verifikasi harus 'approved' atau 'rejected'.");
+        return;
+      }
+
+      // Cek keberadaan profil mitra
+      const [rows] = await pool.execute<any[]>(
+        'SELECT user_id FROM mitra_profiles WHERE id = ?',
+        [mitraId]
+      );
+
+      if (!rows.length) {
+        sendNotFound(res, 'Data pengajuan toko mitra tidak ditemukan.');
+        return;
+      }
+
+      const userId = rows[0].user_id;
+      const isApproved = status === 'approved';
+      const isVerifiedVal = isApproved ? 1 : 2;
+      const rejectionReason = isApproved ? null : (reason?.trim() || 'Dokumen belum lengkap atau tidak sesuai ketentuan.');
+
+      // Update status di tabel mitra_profiles
+      await pool.execute(
+        'UPDATE mitra_profiles SET is_verified = ?, is_active = 1, rejection_reason = ?, updated_at = NOW() WHERE id = ?',
+        [isVerifiedVal, rejectionReason, mitraId]
+      );
+
+      // Update status akun user di tabel users (tetap aktif agar bisa login & melengkapi dokumen)
+      await pool.execute(
+        'UPDATE users SET is_active = 1, updated_at = NOW() WHERE id = ?',
+        [userId]
+      );
+
+      const message = isApproved
+        ? 'Toko mitra berhasil disetujui.'
+        : 'Pengajuan toko mitra telah ditolak.';
+
+      sendSuccess(res, { mitraId, status, rejectionReason }, message);
+    } catch (err) {
+      sendError(res, 'Gagal memproses verifikasi toko mitra.', 500, String(err));
     }
-
-    // Cek keberadaan profil mitra
-    const [rows] = await pool.execute<any[]>(
-      'SELECT user_id FROM mitra_profiles WHERE id = ?',
-      [mitraId]
-    );
-
-    if (!rows.length) {
-      sendNotFound(res, 'Data pengajuan toko mitra tidak ditemukan.');
-      return;
-    }
-
-    const userId = rows[0].user_id;
-    const isApproved = status === 'approved';
-    const isVerifiedVal = isApproved ? 1 : 0;
-    const isActiveVal = isApproved ? 1 : 0;
-
-    // Update status di tabel mitra_profiles
-    await pool.execute(
-      'UPDATE mitra_profiles SET is_verified = ?, is_active = ?, updated_at = NOW() WHERE id = ?',
-      [isVerifiedVal, isActiveVal, mitraId]
-    );
-
-    // Update status akun user di tabel users
-    await pool.execute(
-      'UPDATE users SET is_active = ?, updated_at = NOW() WHERE id = ?',
-      [isActiveVal, userId]
-    );
-
-    const message = isApproved
-      ? 'Toko mitra berhasil disetujui.'
-      : 'Pengajuan toko mitra telah ditolak.';
-
-    sendSuccess(res, { mitraId, status }, message);
-  } catch (err) {
-    sendError(res, 'Gagal memproses verifikasi toko mitra.', 500, String(err));
-  }
-};
+  };

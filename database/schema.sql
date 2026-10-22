@@ -140,15 +140,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 -- ============================================================
 -- SEED DATA: Admin default (ubah password setelah deploy!)
--- Password default: Admin@DinoyoCraft123
+-- Password default: Admin123
 -- Hash bcrypt (rounds=12): $2b$12$...
 -- ============================================================
 
 INSERT IGNORE INTO users (name, email, password_hash, role, is_active)
 VALUES (
   'Super Admin',
-  'admin@dinoyocraft.com',
-  '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewzNLJz9eKhIMiqS',
+  'csdinoyocraft@gmail.com',
+  '$2b$10$wfcDxLuZWPYzSA5UeXj6HO2XU1xjLfaYD.fcGmH7I6fCsg8CZec2K',
   'admin',
   TRUE
 );
@@ -162,25 +162,25 @@ SELECT
   'KATEGORI_PRODUK', 'GERABAH_TRADISIONAL', 
   'Gerabah Tradisional', 'Produk gerabah bermotif tradisional Jawa',
   u.id
-FROM users u WHERE u.email = 'admin@dinoyocraft.com' LIMIT 1;
+FROM users u WHERE u.email = 'csdinoyocraft@gmail.com' LIMIT 1;
 
 INSERT IGNORE INTO master_data (category, `key`, value, description, created_by)
 SELECT 
   'KATEGORI_PRODUK', 'KERAMIK_MODERN', 
   'Keramik Modern', 'Produk keramik dengan desain kontemporer',
   u.id
-FROM users u WHERE u.email = 'admin@dinoyocraft.com' LIMIT 1;
+FROM users u WHERE u.email = 'csdinoyocraft@gmail.com' LIMIT 1;
 
 INSERT IGNORE INTO master_data (category, `key`, value, description, created_by)
 SELECT 
   'KATEGORI_PRODUK', 'SOUVENIR_WISATA', 
   'Souvenir Wisata', 'Produk souvenir untuk pariwisata Malang',
   u.id
-FROM users u WHERE u.email = 'admin@dinoyocraft.com' LIMIT 1;
+FROM users u WHERE u.email = 'csdinoyocraft@gmail.com' LIMIT 1;
 
 INSERT IGNORE INTO master_data (category, `key`, value, description, created_by)
 SELECT 
   'STATUS_TRANSAKSI', 'PENDING', 
   'Menunggu Konfirmasi', 'Transaksi sedang menunggu verifikasi',
   u.id
-FROM users u WHERE u.email = 'admin@dinoyocraft.com' LIMIT 1;
+FROM users u WHERE u.email = 'csdinoyocraft@gmail.com' LIMIT 1;
