@@ -22,23 +22,12 @@ const app: Application = express();
 // -------------------------------------------------------
 // 1. CORS — Konfigurasi origin yang diizinkan
 // -------------------------------------------------------
-const allowedOrigins = (process.env['ALLOWED_ORIGINS'] ?? 'http://localhost:3000')
-  .split(',')
-  .map((o) => o.trim());
-
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Izinkan request tanpa origin (Postman, server-to-server)
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`Origin '${origin}' tidak diizinkan oleh CORS.`));
-      }
-    },
+    origin: process.env['FRONTEND_URL'] || 'http://localhost:3000', // Wajib URL frontend secara spesifik
+    credentials: true,                                              // Wajib true agar cookie/token bisa lewat
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
   })
 );
 

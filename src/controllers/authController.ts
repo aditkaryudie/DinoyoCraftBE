@@ -213,11 +213,24 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
       { expiresIn: jwtExpiresIn as any }
     );
 
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax', // Ubah dari 'strict' menjadi 'lax'
+      maxAge: 24 * 60 * 60 * 1000 // 1 hari
+    });
+
     res.status(200).json({
       success: true,
       message: "Login berhasil!",
       data: {
-        token: token
+        token: token,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        store_name: user.store_name,
+        is_verified: user.is_verified
       },
       meta: {
         timestamp: new Date().toISOString()
@@ -388,10 +401,19 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       { expiresIn: jwtExpiresIn as any }
     );
 
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60 * 1000
+    });
+
     res.status(200).json({
+      success: true,
       message: 'Login dengan Google berhasil!',
       token,
       data: {
+        token,
         id: user.id,
         name: user.name,
         email: user.email,

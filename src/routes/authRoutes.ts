@@ -16,6 +16,7 @@ import { verifyToken } from '../middlewares/authMiddleware';
 const router = Router();
 
 router.post('/register-mitra', uploadMitraDocs, registerMitra);
+router.post('/login', loginMitra);
 router.post('/login-mitra', loginMitra);
 router.post('/google-login', googleLogin);
 router.post('/forgot-password', forgotPassword);
