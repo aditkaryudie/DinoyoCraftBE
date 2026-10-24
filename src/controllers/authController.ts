@@ -21,6 +21,26 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    const nameRegex = /^[a-zA-Z\s]+$/;
+    if (!nameRegex.test(name.trim())) {
+      await connection.rollback();
+      res.status(400).json({ message: 'Format nama tidak valid (hanya huruf dan spasi)' });
+      return;
+    }
+
+    const phoneRegex = /^[0-9]+$/;
+    if (!phoneRegex.test(whatsapp_number.trim())) {
+      await connection.rollback();
+      res.status(400).json({ message: 'Nomor HP hanya boleh berisi angka' });
+      return;
+    }
+
+    if (whatsapp_number.trim().length < 10 || whatsapp_number.trim().length > 14) {
+      await connection.rollback();
+      res.status(400).json({ message: 'Nomor HP harus 10-14 digit' });
+      return;
+    }
+
     if (!files || !files.ktp_file || !files.nib_file || !files.product_images) {
       await connection.rollback();
       res.status(400).json({ message: 'File KTP, NIB, dan Foto Produk wajib diunggah' });

@@ -113,3 +113,253 @@ export const getDashboardMitra = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server' });
   }
 };
+
+// --- 1. ENDPOINT LAPORAN KEUANGAN ---
+export const getFinanceReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Autentikasi gagal. User tidak ditemukan.' });
+      return;
+    }
+
+    const [mitraRows]: any = await pool.query(
+      'SELECT id, user_id, store_name FROM mitra_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+
+    const mitra = mitraRows && mitraRows.length > 0 ? mitraRows[0] : null;
+    if (!mitra) {
+      res.status(404).json({ success: false, message: 'Mitra tidak ditemukan' });
+      return;
+    }
+    const mitraId = mitra.id;
+
+    // Ambil order untuk kalkulasi saldo
+    const [orders]: any = await pool.query(
+      'SELECT id, total_amount, status, created_at FROM orders WHERE mitra_id = ?',
+      [mitraId]
+    );
+
+    let saldoAktif = 0;
+    let pendapatanTertunda = 0;
+
+    orders.forEach((order: any) => {
+      const total = Number(order.total_amount || 0);
+      const status = (order.status || '').toLowerCase();
+      if (status === 'completed' || status === 'delivered' || status === 'selesai') {
+        saldoAktif += total;
+      } else if (['pending', 'paid', 'packed', 'shipped', 'processing'].includes(status)) {
+        pendapatanTertunda += total;
+      }
+    });
+
+    // Ambil riwayat pesanan/transaksi terbaru untuk mitra ini
+    const [recentOrderRows]: any = await pool.query(
+      `SELECT id, created_at, total_amount, status 
+       FROM orders 
+       WHERE mitra_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 10`,
+      [mitraId]
+    );
+
+    let riwayatTransaksi = recentOrderRows.map((o: any) => {
+      const d = o.created_at ? new Date(o.created_at) : new Date();
+      const tanggal = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+      const statusStr = (o.status || '').toLowerCase();
+      const statusLabel = (statusStr === 'completed' || statusStr === 'selesai' || statusStr === 'delivered')
+        ? 'Selesai'
+        : (statusStr === 'cancelled' ? 'Dibatalkan' : 'Tertunda');
+      return {
+        id: `TRX-${String(o.id).padStart(3, '0')}`,
+        tanggal,
+        deskripsi: `Penjualan - INV/${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/00${o.id}`,
+        status: statusLabel,
+        nominal: Number(o.total_amount || 0)
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        saldoAktif,
+        pendapatanTertunda,
+        totalDitarik: 0,
+        riwayatTransaksi
+      }
+    });
+  } catch (error) {
+    console.error('Error finance report:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// --- 2. ENDPOINT MANAJEMEN PESANAN ---
+export const getOrders = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Autentikasi gagal. User tidak ditemukan.' });
+      return;
+    }
+
+    const [mitraRows]: any = await pool.query(
+      'SELECT id FROM mitra_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+
+    const mitra = mitraRows && mitraRows.length > 0 ? mitraRows[0] : null;
+    if (!mitra) {
+      res.status(404).json({ success: false, message: 'Mitra tidak ditemukan' });
+      return;
+    }
+    const mitraId = mitra.id;
+
+    // Cari pesanan milik mitra ini
+    const [orderRows]: any = await pool.query(
+      `SELECT 
+        o.id,
+        o.created_at,
+        o.status,
+        o.total_amount,
+        COALESCE(u.name, 'Customer') AS customer_name
+      FROM orders o
+      LEFT JOIN users u ON o.user_id = u.id
+      WHERE o.mitra_id = ?
+      ORDER BY o.created_at DESC`,
+      [mitraId]
+    );
+
+    if (orderRows.length === 0) {
+      res.json({ success: true, data: [] });
+      return;
+    }
+
+    const orderIds = orderRows.map((o: any) => o.id);
+    const placeholders = orderIds.map(() => '?').join(',');
+
+    // Ambil order items untuk pesanan-pesanan ini
+    const [itemRows]: any = await pool.query(
+      `SELECT 
+        oi.order_id,
+        oi.quantity,
+        oi.unit_price,
+        p.name AS product_name,
+        p.image_urls
+      FROM order_items oi
+      JOIN products p ON oi.product_id = p.id
+      WHERE oi.order_id IN (${placeholders})`,
+      orderIds
+    );
+
+    // Group items by order_id
+    const itemsByOrder: Record<number, any[]> = {};
+    for (const item of itemRows) {
+      if (!itemsByOrder[item.order_id]) {
+        itemsByOrder[item.order_id] = [];
+      }
+      itemsByOrder[item.order_id].push({
+        productName: item.product_name,
+        quantity: item.quantity,
+        price: Number(item.unit_price)
+      });
+    }
+
+    // Format respons
+    const formattedOrders = orderRows.map((order: any) => {
+      const orderDate = order.created_at ? new Date(order.created_at) : new Date();
+      const dateStr = orderDate.toISOString().split('T')[0].replace(/-/g, '');
+      return {
+        orderId: `ORD-${dateStr}-00${order.id}`,
+        tanggal: order.created_at,
+        customerName: order.customer_name || 'Customer',
+        status: order.status,
+        totalBelanja: Number(order.total_amount || 0),
+        items: itemsByOrder[order.id] || []
+      };
+    });
+
+    res.json({ success: true, data: formattedOrders });
+  } catch (error) {
+    console.error('Error get orders:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// --- 3. ENDPOINT EDIT PRODUK (FIX KATALOG BUG) ---
+export const updateProduct = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params; // ID produk dari URL
+    const { name, title, price, stock, category_id, description } = req.body;
+    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Autentikasi gagal. User tidak ditemukan.' });
+      return;
+    }
+
+    const [mitraRows]: any = await pool.query(
+      'SELECT id FROM mitra_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+
+    const mitra = mitraRows && mitraRows.length > 0 ? mitraRows[0] : null;
+    if (!mitra) {
+      res.status(404).json({ success: false, message: 'Profil mitra tidak ditemukan' });
+      return;
+    }
+    const mitraId = mitra.id;
+
+    // Pastikan produk yang diedit benar-benar milik mitra yang sedang login
+    const [prodRows]: any = await pool.query(
+      'SELECT * FROM products WHERE id = ? AND mitra_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) LIMIT 1',
+      [id, mitraId]
+    );
+
+    if (!prodRows || prodRows.length === 0) {
+      res.status(404).json({ success: false, message: 'Produk tidak ditemukan atau Anda tidak memiliki akses' });
+      return;
+    }
+
+    const existingProduct = prodRows[0];
+
+    // Dapatkan data update (dukung 'name' atau 'title')
+    const updatedName = name !== undefined ? name : (title !== undefined ? title : existingProduct.name);
+    const updatedPrice = price !== undefined ? parseFloat(price) : existingProduct.price;
+    const updatedStock = stock !== undefined ? parseInt(stock) : existingProduct.stock;
+    const updatedDesc = description !== undefined ? description : existingProduct.description;
+
+    let updatedCategoryId = existingProduct.category_id;
+    if (category_id !== undefined) {
+      const parsedCat = parseInt(category_id);
+      if (!isNaN(parsedCat)) {
+        updatedCategoryId = parsedCat;
+      } else {
+        const [catRows]: any = await pool.query('SELECT id FROM categories WHERE name = ? LIMIT 1', [category_id]);
+        if (catRows && catRows.length > 0) {
+          updatedCategoryId = catRows[0].id;
+        }
+      }
+    }
+
+    // Lakukan update ke database
+    await pool.query(
+      `UPDATE products 
+       SET name = ?, description = ?, price = ?, stock = ?, category_id = ?, updated_at = NOW() 
+       WHERE id = ? AND mitra_id = ?`,
+      [updatedName, updatedDesc, updatedPrice, updatedStock, updatedCategoryId, id, mitraId]
+    );
+
+    const [updatedRows]: any = await pool.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
+
+    res.json({
+      success: true,
+      message: 'Produk berhasil diperbarui!',
+      data: updatedRows && updatedRows.length > 0 ? updatedRows[0] : existingProduct
+    });
+  } catch (error) {
+    console.error('Error update product:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
