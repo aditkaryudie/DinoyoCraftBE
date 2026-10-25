@@ -314,7 +314,3 @@ DinoyoCraftBE/
 4. **Git Workflow**: Gunakan pesan commit yang deskriptif dan buat branch terpisah saat mengerjakan fitur baru sebelum menggabungkannya (*merge*) ke branch utama.
 
 ---
-
-<p align="center">
-  Dibuat dengan ❤️ oleh <b>Kelompok 1 (Kelas T3C)</b> untuk kemajuan <b>Kampung Wisata Keramik Dinoyo</b>.
-</p>
