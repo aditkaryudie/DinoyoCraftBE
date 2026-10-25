@@ -12,6 +12,7 @@ import { auditLogger } from './middlewares/auditMiddleware.js';
 import authRoutes from './routes/authRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import mitraRoutes from './routes/mitraRoutes.js';
+import chatRoutes from './routes/chatRoutes.js';
 import path from 'path';
 
 // Load environment variables SEBELUM apapun
@@ -82,6 +83,7 @@ app.use('/uploads', express.static(targetFolder));
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/mitra', mitraRoutes);
+app.use('/api/chat', chatRoutes);
 
 // -------------------------------------------------------
 // 6. Router Utama

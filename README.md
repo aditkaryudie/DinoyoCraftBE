@@ -14,11 +14,9 @@ Backend RESTful API untuk **DinoyoCraft**, platform e-commerce multi-vendor, kat
 
 ## 👥 Tim Pengembang (Kelompok 1 - Kelas T3C)
 
-| NIM | Nama Mahasiswa | Peran & Tanggung Jawab |
-| :--- | :--- | :--- |
-| **253140701111017** | **Aditya Karyudie** | Fullstack & Backend Architect, Integrasi AI & Auth |
-| **253140701111026** | **Mochammad Al Mizan Ya Hafidl** | Database Design, API Mitra & Transaksi |
-| **253140701111042** | **Moh Ali Farda Al Ghifari** | API Admin, Manajemen Produk & Testing |
+- Aditya Karyudie
+- Mochammad Al Mizan Ya Hafidl
+- Moh Ali Farda Al Ghifari
 
 ---
 
@@ -314,7 +312,3 @@ DinoyoCraftBE/
 4. **Git Workflow**: Gunakan pesan commit yang deskriptif dan buat branch terpisah saat mengerjakan fitur baru sebelum menggabungkannya (*merge*) ke branch utama.
 
 ---
-
-<p align="center">
-  Dibuat dengan ❤️ oleh <b>Kelompok 1 (Kelas T3C)</b> untuk kemajuan <b>Kampung Wisata Keramik Dinoyo</b>.
-</p>

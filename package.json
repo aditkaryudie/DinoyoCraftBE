@@ -28,7 +28,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "mysql2": "^3.24.5",
-    "nodemailer": "^10.1.2"
+    "nodemailer": "^10.1.2",
+    "pusher": "^5.3.4"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

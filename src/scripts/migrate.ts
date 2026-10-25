@@ -198,6 +198,21 @@ const migrations = [
     FOREIGN KEY (\`created_by\`) REFERENCES \`users\` (\`id\`) ON UPDATE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
+  `CREATE TABLE IF NOT EXISTS \`messages\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`sender_id\` int UNSIGNED NOT NULL,
+    \`receiver_id\` int UNSIGNED NOT NULL,
+    \`message\` text COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`is_read\` tinyint(1) DEFAULT '0',
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_messages_sender\` (\`sender_id\`),
+    KEY \`idx_messages_receiver\` (\`receiver_id\`),
+    FOREIGN KEY (\`sender_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE,
+    FOREIGN KEY (\`receiver_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
   // ==========================================
   // 3. SEEDING / INSERT DATA (DENGAN IGNORE AGAR AMAN JIKA DI-RUN ULANG)
   // ==========================================
