@@ -14,9 +14,9 @@ Backend RESTful API untuk **DinoyoCraft**, platform e-commerce multi-vendor, kat
 
 ## 👥 Tim Pengembang (Kelompok 1 - Kelas T3C)
 
-- Aditya Karyudie
 - Mochammad Al Mizan Ya Hafidl
 - Moh Ali Farda Al Ghifari
+- Aditya Karyudie
 
 ---
 
