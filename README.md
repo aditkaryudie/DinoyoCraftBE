@@ -14,11 +14,11 @@ Backend RESTful API untuk **DinoyoCraft**, platform e-commerce multi-vendor, kat
 
 ## 👥 Tim Pengembang (Kelompok 1 - Kelas T3C)
 
-| NIM | Nama Mahasiswa | Peran & Tanggung Jawab |
+| NIM | Nama Mahasiswa |
 | :--- | :--- | :--- |
-| **253140701111017** | **Aditya Karyudie** | Fullstack & Backend Architect, Integrasi AI & Auth |
-| **253140701111026** | **Mochammad Al Mizan Ya Hafidl** | Database Design, API Mitra & Transaksi |
-| **253140701111042** | **Moh Ali Farda Al Ghifari** | API Admin, Manajemen Produk & Testing |
+| **253140701111017** | **Aditya Karyudie** |
+| **253140701111026** | **Mochammad Al Mizan Ya Hafidl** |
+| **253140701111042** | **Moh Ali Farda Al Ghifari** |
 
 ---
 
