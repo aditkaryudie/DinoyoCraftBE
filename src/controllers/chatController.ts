@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import Pusher from 'pusher';
 import pool from '../config/database.js';
+import { encryptMessage, decryptMessage } from '../utils/encryption.js';
 
 // Inisialisasi Pusher Server SDK
 const pusher = new Pusher({
@@ -34,10 +35,13 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
     const numericSenderId = Number(senderId);
     const numericTargetId = Number(targetUserId);
 
-    // 1. Simpan pesan ke database (MySQL)
+    // 1. Enkripsi pesan sebelum masuk ke database
+    const encryptedText = encryptMessage(message.trim());
+
+    // Simpan versi terenkripsi ke database (MySQL)
     const [result]: any = await pool.query(
       'INSERT INTO messages (sender_id, receiver_id, message, is_read) VALUES (?, ?, ?, 0)',
-      [numericSenderId, numericTargetId, message.trim()]
+      [numericSenderId, numericTargetId, encryptedText]
     );
 
     const insertId = result.insertId;
@@ -50,7 +54,7 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
       id: insertId,
       sender_id: numericSenderId,
       receiver_id: numericTargetId,
-      message: message.trim(),
+      message: encryptedText,
       created_at: new Date()
     };
 
@@ -67,7 +71,7 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
         id: Number(newMessage.id),
         sender_id: numericSenderId,
         receiver_id: numericTargetId,
-        message: message.trim(),
+        message: message.trim(), // Tetap kirim teks asli ke Pusher (karena Pusher TLS sudah aman)
         created_at: newMessage.created_at
       });
       console.log(`[Pusher Backend] Event 'new-message' berhasil dikirim ke Pusher`);
@@ -78,7 +82,10 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
     res.status(201).json({
       success: true,
       message: 'Pesan terkirim!',
-      data: newMessage
+      data: {
+        ...newMessage,
+        message: message.trim() // Kirim teks asli di response agar frontend pengirim langsung menampilkan pesan plain
+      }
     });
   } catch (error: any) {
     console.error('❌ Error saat sendMessage:', error);
@@ -115,6 +122,12 @@ export const getMessages = async (req: Request, res: Response): Promise<void> =>
       [numericCurrentId, numericTargetId, numericTargetId, numericCurrentId]
     );
 
+    // Dekripsi pesan sebelum dikirim ke frontend
+    const decryptedMessages = messages.map((msg: any) => ({
+      ...msg,
+      message: decryptMessage(msg.message)
+    }));
+
     // Tandai pesan dari targetUserId yang masuk ke currentUserId sebagai sudah dibaca
     await pool.query(
       'UPDATE messages SET is_read = 1 WHERE sender_id = ? AND receiver_id = ? AND is_read = 0',
@@ -124,7 +137,7 @@ export const getMessages = async (req: Request, res: Response): Promise<void> =>
     res.status(200).json({
       success: true,
       current_user_id: numericCurrentId,
-      data: messages
+      data: decryptedMessages
     });
   } catch (error: any) {
     console.error('❌ Error saat getMessages:', error);
@@ -135,6 +148,9 @@ export const getMessages = async (req: Request, res: Response): Promise<void> =>
     });
   }
 };
+
+// Alias getChatHistory untuk kemudahan dan kompatibilitas
+export const getChatHistory = getMessages;
 
 /**
  * Mengambil daftar kontak percakapan yang tersedia untuk user yang sedang login
@@ -182,10 +198,16 @@ export const getChatContacts = async (req: Request, res: Response): Promise<void
       [numericCurrentId, numericCurrentId, numericCurrentId, numericCurrentId, numericCurrentId, numericCurrentId]
     );
 
+    // Dekripsi preview pesan terakhir untuk setiap kontak
+    const decryptedContacts = contacts.map((contact: any) => ({
+      ...contact,
+      last_message: contact.last_message ? decryptMessage(contact.last_message) : contact.last_message
+    }));
+
     res.status(200).json({
       success: true,
       current_user_id: numericCurrentId,
-      data: contacts
+      data: decryptedContacts
     });
   } catch (error: any) {
     console.error('❌ Error saat getChatContacts:', error);

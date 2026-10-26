@@ -213,6 +213,34 @@ const migrations = [
     FOREIGN KEY (\`receiver_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
+  `CREATE TABLE IF NOT EXISTS \`reports\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`reporter_id\` int UNSIGNED DEFAULT NULL,
+    \`reporter_name\` varchar(150) NOT NULL,
+    \`type\` varchar(50) NOT NULL,
+    \`target_id\` int UNSIGNED DEFAULT NULL,
+    \`target_name\` varchar(255) NOT NULL,
+    \`reason\` text NOT NULL,
+    \`status\` varchar(50) NOT NULL DEFAULT 'pending',
+    \`resolved_at\` datetime DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  `CREATE TABLE IF NOT EXISTS \`account_deletions\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED DEFAULT NULL,
+    \`name\` varchar(100) NOT NULL,
+    \`email\` varchar(255) NOT NULL,
+    \`reason\` text NOT NULL,
+    \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    \`resolved_at\` datetime DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
   // ==========================================
   // 3. SEEDING / INSERT DATA (DENGAN IGNORE AGAR AMAN JIKA DI-RUN ULANG)
   // ==========================================
