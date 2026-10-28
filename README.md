@@ -207,9 +207,9 @@ Untuk mengaktifkan fitur chat real-time interaktif antara pengguna, mitra, dan a
 ### 3. Masukkan Kredensial ke `.env`
 Buka tab **App Keys** pada aplikasi Pusher Anda, lalu salin kuncinya ke file `.env` di backend:
 ```env
-PUSHER_APP_ID=2205026
-PUSHER_KEY=b0fa050e0050acfb222a
-PUSHER_SECRET=eb2e25f47f9d24f686aa
+PUSHER_APP_ID=your_pusher_app_id
+PUSHER_KEY=your_pusher_key
+PUSHER_SECRET=your_pusher_secret
 PUSHER_CLUSTER=ap1
 ```
 
