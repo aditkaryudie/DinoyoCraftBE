@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resetPassword = exports.verifyOtp = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.googleLogin = exports.loginMitra = exports.registerMitra = void 0;
+exports.reuploadDocs = exports.resetPassword = exports.verifyOtp = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.googleLogin = exports.loginMitra = exports.registerMitra = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const google_auth_library_1 = require("google-auth-library");
@@ -18,6 +18,23 @@ const registerMitra = async (req, res) => {
         if (!name || !email || !whatsapp_number || !store_name || !workshop_address) {
             await connection.rollback();
             res.status(400).json({ message: 'Semua data teks wajib diisi' });
+            return;
+        }
+        const nameRegex = /^[a-zA-Z\s]+$/;
+        if (!nameRegex.test(name.trim())) {
+            await connection.rollback();
+            res.status(400).json({ message: 'Format nama tidak valid (hanya huruf dan spasi)' });
+            return;
+        }
+        const phoneRegex = /^[0-9]+$/;
+        if (!phoneRegex.test(whatsapp_number.trim())) {
+            await connection.rollback();
+            res.status(400).json({ message: 'Nomor HP hanya boleh berisi angka' });
+            return;
+        }
+        if (whatsapp_number.trim().length < 10 || whatsapp_number.trim().length > 14) {
+            await connection.rollback();
+            res.status(400).json({ message: 'Nomor HP harus 10-14 digit' });
             return;
         }
         if (!files || !files.ktp_file || !files.nib_file || !files.product_images) {
@@ -84,14 +101,22 @@ const registerMitra = async (req, res) => {
         }
         await connection.commit();
         res.status(201).json({
+            success: true,
             message: 'Registrasi Mitra berhasil! Menunggu verifikasi admin.',
+            meta: {
+                timestamp: new Date().toISOString()
+            }
         });
         return;
     }
     catch (error) {
         await connection.rollback();
         console.error('Error register mitra:', error);
-        res.status(500).json({ message: 'Terjadi kesalahan pada server' });
+        res.status(500).json({
+            success: false,
+            message: 'Terjadi kesalahan pada server',
+            meta: { timestamp: new Date().toISOString() }
+        });
         return;
     }
     finally {
@@ -103,68 +128,98 @@ const loginMitra = async (req, res) => {
     try {
         const { email, password } = req.body;
         if (!email || !password) {
-            res.status(400).json({ message: 'Email dan password wajib diisi' });
+            res.status(400).json({
+                success: false,
+                message: 'Email dan password wajib diisi',
+                meta: { timestamp: new Date().toISOString() }
+            });
             return;
         }
         const query = `
       SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
-             m.store_name, m.is_verified 
-      FROM users u 
+             m.store_name, m.is_verified, m.rejection_reason FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE u.email = ?
     `;
         const [users] = await database_1.default.query(query, [email]);
         if (users.length === 0) {
-            res.status(401).json({ message: 'Email atau password salah' });
+            res.status(401).json({
+                success: false,
+                message: 'Email atau password salah',
+                meta: { timestamp: new Date().toISOString() }
+            });
             return;
         }
         const user = users[0];
         if (user.role !== 'mitra' && user.role !== 'admin') {
-            res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra.' });
-            return;
-        }
-        if (user.is_active === 0) {
-            res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
-            return;
-        }
-        // ============================================================
-        // 🔒 PROTEKSI VERIFIKASI MITRA (TAMBAHAN LOGIK)
-        // ============================================================
-        if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
             res.status(403).json({
-                message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
+                success: false,
+                message: 'Akses ditolak. Akun ini bukan akun Mitra.',
+                meta: { timestamp: new Date().toISOString() }
             });
             return;
         }
+        if (user.is_active === 0) {
+            res.status(403).json({
+                success: false,
+                message: 'Akun Anda sedang dinonaktifkan.',
+                meta: { timestamp: new Date().toISOString() }
+            });
+            return;
+        }
+        // Mitra belum terverifikasi / ditolak tetap diizinkan login
         if (!user.password_hash) {
-            res.status(400).json({ message: 'Akun ini terdaftar melalui Google. Silakan masuk menggunakan Google.' });
+            res.status(400).json({
+                success: false,
+                message: 'Akun ini terdaftar melalui Google. Silakan masuk menggunakan Google.',
+                meta: { timestamp: new Date().toISOString() }
+            });
             return;
         }
         const isMatch = await bcrypt_1.default.compare(password, user.password_hash);
         if (!isMatch) {
-            res.status(401).json({ message: 'Email atau password salah' });
+            res.status(401).json({
+                success: false,
+                message: "Email atau password salah!",
+                meta: { timestamp: new Date().toISOString() }
+            });
             return;
         }
         const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
         const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
         const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn });
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax', // Ubah dari 'strict' menjadi 'lax'
+            maxAge: 24 * 60 * 60 * 1000 // 1 hari
+        });
         res.status(200).json({
-            message: 'Login berhasil!',
-            token,
+            success: true,
+            message: "Login berhasil!",
             data: {
+                token: token,
                 id: user.id,
                 name: user.name,
                 email: user.email,
                 role: user.role,
                 store_name: user.store_name,
-                is_verified: user.is_verified
+                is_verified: user.is_verified,
+                rejection_reason: user.rejection_reason
+            },
+            meta: {
+                timestamp: new Date().toISOString()
             }
         });
         return;
     }
     catch (error) {
         console.error('Error login mitra:', error);
-        res.status(500).json({ message: 'Terjadi kesalahan pada server saat login' });
+        res.status(500).json({
+            success: false,
+            message: "Terjadi kesalahan pada server.",
+            meta: { timestamp: new Date().toISOString() }
+        });
         return;
     }
 };
@@ -226,8 +281,7 @@ const googleLogin = async (req, res) => {
         }
         const query = `
       SELECT u.id, u.name, u.email, u.role, u.is_active, u.google_id, u.avatar_url,
-             m.store_name, m.is_verified 
-      FROM users u 
+             m.store_name, m.is_verified, m.rejection_reason FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE (u.google_id IS NOT NULL AND u.google_id = ?) OR u.email = ?
       LIMIT 1
@@ -285,28 +339,29 @@ const googleLogin = async (req, res) => {
                 connection.release();
             }
         }
-        // ============================================================
-        // 🔒 PROTEKSI VERIFIKASI MITRA UNTUK GOOGLE LOGIN
-        // ============================================================
-        if (user.role === 'mitra' && (!user.is_verified || user.is_verified === 0)) {
-            res.status(403).json({
-                message: 'Akun Toko Anda belum disetujui oleh Admin atau pengajuan ditolak.'
-            });
-            return;
-        }
+        // Mitra belum terverifikasi / ditolak Google login diizinkan
         const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
         const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
         const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn });
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 24 * 60 * 60 * 1000
+        });
         res.status(200).json({
+            success: true,
             message: 'Login dengan Google berhasil!',
             token,
             data: {
+                token,
                 id: user.id,
                 name: user.name,
                 email: user.email,
                 role: user.role,
                 store_name: user.store_name,
                 is_verified: user.is_verified,
+                rejection_reason: user.rejection_reason,
                 avatar_url: user.avatar_url || avatarUrl
             }
         });
@@ -327,8 +382,7 @@ const getProfile = async (_req, res) => {
         const [rows] = await database_1.default.query(`SELECT u.id, u.name, u.email, u.role, u.avatar_url,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
-              m.banner_url, m.is_verified
-       FROM users u
+              m.banner_url, m.is_verified, m.rejection_reason, m.ktp_file_url, m.nib_file_url, m.sample_product_images FROM users u
        LEFT JOIN mitra_profiles m ON u.id = m.user_id
        WHERE u.id = ?`, [userId]);
         if (!rows || rows.length === 0) {
@@ -620,4 +674,50 @@ const resetPassword = async (req, res) => {
     }
 };
 exports.resetPassword = resetPassword;
+const reuploadDocs = async (req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        if (!userId) {
+            res.status(401).json({ success: false, message: 'Unauthorized' });
+            return;
+        }
+        const files = req.files;
+        const ktpFile = files?.ktp_file?.[0];
+        const nibFile = files?.nib_file?.[0];
+        const productImages = files?.product_images || files?.sample_product_images;
+        if (!ktpFile && !nibFile && (!productImages || productImages.length === 0)) {
+            res.status(400).json({ success: false, message: 'Harap unggah minimal satu dokumen untuk diperbaiki.' });
+            return;
+        }
+        const updates = [];
+        const params = [];
+        if (ktpFile) {
+            updates.push('ktp_file_url = ?');
+            params.push(`/uploads/${ktpFile.filename}`);
+        }
+        if (nibFile) {
+            updates.push('nib_file_url = ?');
+            params.push(`/uploads/${nibFile.filename}`);
+        }
+        if (productImages && productImages.length > 0) {
+            updates.push('sample_product_images = ?');
+            params.push(JSON.stringify(productImages.map(f => `/uploads/${f.filename}`)));
+        }
+        updates.push('is_verified = 0');
+        updates.push('is_active = 1');
+        updates.push('rejection_reason = NULL');
+        updates.push('updated_at = NOW()');
+        params.push(userId);
+        await database_1.default.query(`UPDATE mitra_profiles SET ${updates.join(', ')} WHERE user_id = ?`, params);
+        res.status(200).json({
+            success: true,
+            message: 'Dokumen berhasil diperbarui dan diajukan ulang untuk verifikasi admin!'
+        });
+    }
+    catch (error) {
+        console.error('Error reuploadDocs:', error);
+        res.status(500).json({ success: false, message: 'Gagal memperbarui dokumen.' });
+    }
+};
+exports.reuploadDocs = reuploadDocs;
 //# sourceMappingURL=authController.js.map

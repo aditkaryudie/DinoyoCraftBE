@@ -16,6 +16,7 @@ const auditMiddleware_js_1 = require("./middlewares/auditMiddleware.js");
 const authRoutes_js_1 = __importDefault(require("./routes/authRoutes.js"));
 const productRoutes_js_1 = __importDefault(require("./routes/productRoutes.js"));
 const mitraRoutes_js_1 = __importDefault(require("./routes/mitraRoutes.js"));
+const chatRoutes_js_1 = __importDefault(require("./routes/chatRoutes.js"));
 const path_1 = __importDefault(require("path"));
 // Load environment variables SEBELUM apapun
 dotenv_1.default.config();
@@ -23,22 +24,11 @@ const app = (0, express_1.default)();
 // -------------------------------------------------------
 // 1. CORS — Konfigurasi origin yang diizinkan
 // -------------------------------------------------------
-const allowedOrigins = (process.env['ALLOWED_ORIGINS'] ?? 'http://localhost:3000')
-    .split(',')
-    .map((o) => o.trim());
 app.use((0, cors_1.default)({
-    origin: (origin, callback) => {
-        // Izinkan request tanpa origin (Postman, server-to-server)
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        }
-        else {
-            callback(new Error(`Origin '${origin}' tidak diizinkan oleh CORS.`));
-        }
-    },
+    origin: process.env['FRONTEND_URL'] || 'http://localhost:3000', // Wajib URL frontend secara spesifik
+    credentials: true, // Wajib true agar cookie/token bisa lewat
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
 }));
 // Tambahkan di bawah blok konfigurasi CORS Anda
 app.use(express_1.default.json());
@@ -83,6 +73,7 @@ app.use('/uploads', express_1.default.static(targetFolder));
 app.use('/api/auth', authRoutes_js_1.default);
 app.use('/api/products', productRoutes_js_1.default);
 app.use('/api/mitra', mitraRoutes_js_1.default);
+app.use('/api/chat', chatRoutes_js_1.default);
 // -------------------------------------------------------
 // 6. Router Utama
 // -------------------------------------------------------
