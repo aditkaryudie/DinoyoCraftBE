@@ -754,7 +754,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
                         <tr>
                           <td style="border-top: 1px solid #ECE3DA; padding-top: 24px; text-align: center;">
                             <p style="margin: 0 0 6px; font-size: 12px; color: #8A7968;">
-                              Butuh bantuan? Hubungi Tim Dukungan DinoyoCraft di <a href="mailto:moneflo677@gmail.com" style="color: #B85C3C; font-weight: 600; text-decoration: none;">moneflo677@gmail.com</a>
+                              Butuh bantuan? Hubungi Tim Dukungan DinoyoCraft di <a href="mailto:csdinoyocraft@gmail.com" style="color: #B85C3C; font-weight: 600; text-decoration: none;">csdinoyocraft@gmail.com</a>
                             </p>
                             <p style="margin: 0; font-size: 11px; color: #A89B8C; line-height: 1.5;">
                               Sentra Kerajinan Keramik Dinoyo, Kota Malang, Jawa Timur<br/>

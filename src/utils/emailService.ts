@@ -28,12 +28,12 @@ export const sendOTPEmail = async (
 
   const attachments = hasLogo
     ? [
-        {
-          filename: 'logo.png',
-          path: logoPath,
-          cid: 'dinoyocraft-logo',
-        },
-      ]
+      {
+        filename: 'logo.png',
+        path: logoPath,
+        cid: 'dinoyocraft-logo',
+      },
+    ]
     : [];
 
   const mailOptions = {
@@ -61,11 +61,10 @@ export const sendOTPEmail = async (
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 24px;">
                       <tr>
                         <td align="center">
-                          ${
-                            hasLogo
-                              ? `<img src="cid:dinoyocraft-logo" alt="DinoyoCraft Logo" width="76" height="76" style="width: 76px; height: 76px; border-radius: 18px; object-fit: cover; display: block; margin: 0 auto 12px; box-shadow: 0 6px 18px rgba(184, 92, 60, 0.25);" />`
-                              : `<div style="width: 64px; height: 64px; background: #B85C3C; border-radius: 16px; margin: 0 auto 12px; text-align: center; line-height: 64px; font-size: 28px; color: #fff;">🏺</div>`
-                          }
+                          ${hasLogo
+        ? `<img src="cid:dinoyocraft-logo" alt="DinoyoCraft Logo" width="76" height="76" style="width: 76px; height: 76px; border-radius: 18px; object-fit: cover; display: block; margin: 0 auto 12px; box-shadow: 0 6px 18px rgba(184, 92, 60, 0.25);" />`
+        : `<div style="width: 64px; height: 64px; background: #B85C3C; border-radius: 16px; margin: 0 auto 12px; text-align: center; line-height: 64px; font-size: 28px; color: #fff;">🏺</div>`
+      }
                           <h1 style="margin: 0; font-size: 24px; font-weight: 800; color: #2D2A26; letter-spacing: -0.03em;">DinoyoCraft</h1>
                           <p style="margin: 4px 0 0; font-size: 12px; font-weight: 700; color: #B85C3C; letter-spacing: 0.08em; text-transform: uppercase;">Sentra Kerajinan Keramik Dinoyo Malang</p>
                         </td>
@@ -124,7 +123,7 @@ export const sendOTPEmail = async (
                       <tr>
                         <td style="border-top: 1px solid #ECE3DA; padding-top: 24px; text-align: center;">
                           <p style="margin: 0 0 6px; font-size: 12px; color: #8A7968;">
-                            Butuh bantuan? Hubungi Tim Dukungan DinoyoCraft di <a href="mailto:moneflo677@gmail.com" style="color: #B85C3C; font-weight: 600; text-decoration: none;">moneflo677@gmail.com</a>
+                            Butuh bantuan? Hubungi Tim Dukungan DinoyoCraft di <a href="mailto:csdinoyocraft@gmail.com" style="color: #B85C3C; font-weight: 600; text-decoration: none;">csdinoyocraft@gmail.com</a>
                           </p>
                           <p style="margin: 0; font-size: 11px; color: #A89B8C; line-height: 1.5;">
                             Sentra Kerajinan Keramik Dinoyo, Kota Malang, Jawa Timur<br/>
