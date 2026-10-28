@@ -9,6 +9,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.verifyMitraStore = exports.getVerifikasiList = exports.createMasterData = exports.getMasterData = exports.updateUserStatus = exports.getAllUsers = exports.getDashboardStats = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
+const pusher_js_1 = require("../utils/pusher.js");
 const response_js_1 = require("../utils/response.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const sanitizeUser = (user) => {
@@ -197,7 +198,8 @@ const getVerifikasiList = async (_req, res) => {
         m.instagram,
         m.ktp_file_url, 
         m.nib_file_url, 
-        m.is_verified, 
+        m.is_verified,
+          m.rejection_reason, 
         m.is_active, 
         m.created_at, 
         u.name AS owner_name, 
@@ -219,7 +221,7 @@ exports.getVerifikasiList = getVerifikasiList;
 const verifyMitraStore = async (req, res) => {
     try {
         const mitraId = parseInt(req.params.id ?? '0');
-        const { status } = req.body;
+        const { status, reason } = req.body;
         if (!['approved', 'rejected'].includes(status)) {
             (0, response_js_1.sendBadRequest)(res, "Status verifikasi harus 'approved' atau 'rejected'.");
             return;
@@ -232,16 +234,31 @@ const verifyMitraStore = async (req, res) => {
         }
         const userId = rows[0].user_id;
         const isApproved = status === 'approved';
-        const isVerifiedVal = isApproved ? 1 : 0;
-        const isActiveVal = isApproved ? 1 : 0;
+        const isVerifiedVal = isApproved ? 1 : 2;
+        const rejectionReason = isApproved ? null : (reason?.trim() || 'Dokumen belum lengkap atau tidak sesuai ketentuan.');
         // Update status di tabel mitra_profiles
-        await database_js_1.default.execute('UPDATE mitra_profiles SET is_verified = ?, is_active = ?, updated_at = NOW() WHERE id = ?', [isVerifiedVal, isActiveVal, mitraId]);
-        // Update status akun user di tabel users
-        await database_js_1.default.execute('UPDATE users SET is_active = ?, updated_at = NOW() WHERE id = ?', [isActiveVal, userId]);
+        await database_js_1.default.execute('UPDATE mitra_profiles SET is_verified = ?, is_active = 1, rejection_reason = ?, updated_at = NOW() WHERE id = ?', [isVerifiedVal, rejectionReason, mitraId]);
+        // Update status akun user di tabel users (tetap aktif agar bisa login & melengkapi dokumen)
+        await database_js_1.default.execute('UPDATE users SET is_active = 1, updated_at = NOW() WHERE id = ?', [userId]);
+        // Kirim notifikasi realtime via Pusher Channels ke mitra terkait
+        try {
+            await pusher_js_1.pusher.trigger([`user-${userId}`, `mitra-${mitraId}`, 'mitra-verification'], 'verification-status-updated', {
+                mitraId,
+                userId,
+                status,
+                is_verified: isVerifiedVal,
+                rejection_reason: rejectionReason,
+                timestamp: new Date().toISOString(),
+            });
+            console.log(`[Pusher Backend] Event 'verification-status-updated' berhasil dikirim ke user-${userId}`);
+        }
+        catch (pusherErr) {
+            console.warn('⚠️ Pusher trigger error pada verifikasi mitra:', pusherErr);
+        }
         const message = isApproved
             ? 'Toko mitra berhasil disetujui.'
             : 'Pengajuan toko mitra telah ditolak.';
-        (0, response_js_1.sendSuccess)(res, { mitraId, status }, message);
+        (0, response_js_1.sendSuccess)(res, { mitraId, status, rejectionReason }, message);
     }
     catch (err) {
         (0, response_js_1.sendError)(res, 'Gagal memproses verifikasi toko mitra.', 500, String(err));

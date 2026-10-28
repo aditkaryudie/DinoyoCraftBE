@@ -7,8 +7,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.apiLimiter = void 0;
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const helmet_1 = __importDefault(require("helmet"));
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const index_js_1 = __importDefault(require("./routes/index.js"));
 const errorMiddleware_js_1 = require("./middlewares/errorMiddleware.js");
@@ -23,26 +26,28 @@ const app = (0, express_1.default)();
 // -------------------------------------------------------
 // 1. CORS — Konfigurasi origin yang diizinkan
 // -------------------------------------------------------
-const allowedOrigins = (process.env['ALLOWED_ORIGINS'] ?? 'http://localhost:3000')
-    .split(',')
-    .map((o) => o.trim());
 app.use((0, cors_1.default)({
-    origin: (origin, callback) => {
-        // Izinkan request tanpa origin (Postman, server-to-server)
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        }
-        else {
-            callback(new Error(`Origin '${origin}' tidak diizinkan oleh CORS.`));
-        }
-    },
+    origin: process.env['FRONTEND_URL'] || 'http://localhost:3000', // Wajib URL frontend secara spesifik
+    credentials: true, // Wajib true agar cookie/token bisa lewat
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
 }));
-// Tambahkan di bawah blok konfigurasi CORS Anda
-app.use(express_1.default.json());
-app.use(express_1.default.urlencoded({ extended: true }));
+// 2. Keamanan — Helmet
+app.use((0, helmet_1.default)({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+}));
+exports.apiLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 15 * 60 * 1000,
+    limit: 500,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: 'Terlalu banyak permintaan dari IP ini, silakan coba lagi setelah 15 menit.',
+    },
+});
+app.use('/api', exports.apiLimiter);
 // -------------------------------------------------------
 // 2. Body Parsing
 // -------------------------------------------------------

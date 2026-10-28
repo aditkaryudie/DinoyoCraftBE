@@ -7,4 +7,5 @@ export declare const updateProfile: (req: Request, res: Response) => Promise<Res
 export declare const forgotPassword: (req: Request, res: Response) => Promise<void>;
 export declare const verifyOtp: (req: Request, res: Response) => Promise<void>;
 export declare const resetPassword: (req: Request, res: Response) => Promise<void>;
+export declare const reuploadDocs: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=authController.d.ts.map

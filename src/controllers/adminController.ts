@@ -5,6 +5,7 @@
 
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
+import { pusher } from '../utils/pusher.js';
 import {
   sendSuccess,
   sendError,
@@ -312,6 +313,25 @@ export const verifyMitraStore = async (req: Request, res: Response): Promise<voi
         'UPDATE users SET is_active = 1, updated_at = NOW() WHERE id = ?',
         [userId]
       );
+
+      // Kirim notifikasi realtime via Pusher Channels ke mitra terkait
+      try {
+        await pusher.trigger(
+          [`user-${userId}`, `mitra-${mitraId}`, 'mitra-verification'],
+          'verification-status-updated',
+          {
+            mitraId,
+            userId,
+            status,
+            is_verified: isVerifiedVal,
+            rejection_reason: rejectionReason,
+            timestamp: new Date().toISOString(),
+          }
+        );
+        console.log(`[Pusher Backend] Event 'verification-status-updated' berhasil dikirim ke user-${userId}`);
+      } catch (pusherErr) {
+        console.warn('⚠️ Pusher trigger error pada verifikasi mitra:', pusherErr);
+      }
 
       const message = isApproved
         ? 'Toko mitra berhasil disetujui.'
