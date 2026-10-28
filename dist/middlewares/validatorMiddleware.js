@@ -4,8 +4,31 @@
 //  Middleware Validasi — Fail Fast sebelum masuk ke controller
 // ============================================================
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.aiAnalysisValidationRules = exports.loginValidationRules = exports.registerValidationRules = exports.validateBody = void 0;
+exports.aiAnalysisValidationRules = exports.loginValidationRules = exports.registerValidationRules = exports.validateBody = exports.validateZod = void 0;
 const response_js_1 = require("../utils/response.js");
+/**
+ * validateZod
+ * Middleware validasi berbasis Zod Schema
+ */
+const validateZod = (schema) => {
+    return (req, res, next) => {
+        const result = schema.safeParse(req.body);
+        if (!result.success) {
+            const fieldErrors = {};
+            for (const issue of result.error.issues) {
+                const field = issue.path.join('.') || 'body';
+                if (!fieldErrors[field])
+                    fieldErrors[field] = [];
+                fieldErrors[field].push(issue.message);
+            }
+            (0, response_js_1.sendBadRequest)(res, 'Validasi data gagal. Periksa kembali input Anda.', fieldErrors);
+            return;
+        }
+        req.body = result.data;
+        next();
+    };
+};
+exports.validateZod = validateZod;
 /**
  * Validator email sederhana
  */

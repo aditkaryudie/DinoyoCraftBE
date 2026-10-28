@@ -28,7 +28,7 @@ Backend RESTful API untuk **DinoyoCraft**, platform e-commerce multi-vendor dan 
   - Role: `admin`, `mitra`, dan `pengunjung`.
   - Akses JWT Token dengan mekanisme invalidasi sesi (`token_version`).
   - Google OAuth 2.0 Single Sign-On (Google Login).
-  - Alur Lupa Password & Verifikasi OTP 6-digit via SMTP Gmail (Nodemailer) yang tersimpan persisten di database (`user_otps`) sehingga tangguh di lingkungan *serverless*.
+  - Alur Lupa Password & Verifikasi OTP 6-digit via SMTP Gmail (Nodemailer) dengan template email HTML branded DinoyoCraft, logo resmi tersemat via CID (Content-ID inline), dan penyimpanan persisten di database (`user_otps`) sehingga tangguh di lingkungan *serverless*.
 - 🛡️ **Validasi Input Terpusat & Keamanan HTTP**:
   - **Zod Fail-Fast Validation**: Seluruh payload API divalidasi ketat menggunakan Zod Schema sebelum menyentuh controller bisnis.
   - **Helmet Security**: Header keamanan HTTP aktif dengan `crossOriginResourcePolicy: { policy: 'cross-origin' }` agar file media dan gambar upload tidak terblokir di Web & Mobile.
@@ -347,6 +347,8 @@ users (id, name, email, password_hash, role, google_id, avatar_url, is_active, .
 
 ```plaintext
 DinoyoCraftBE/
+├── assets/                     # Aset statis & logo DinoyoCraft untuk template email
+│   └── logo.png                # Logo resmi untuk lampiran inline email (CID)
 ├── database/                   # Master DDL SQL lengkap & cadangan import manual
 │   └── schema.sql              # Master skema MySQL & seed data awal
 ├── dist/                       # Output kompilasi TypeScript (produksi)
