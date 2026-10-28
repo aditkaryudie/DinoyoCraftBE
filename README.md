@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Google_Gemini_AI-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Google Gemini" />
 </p>
 
-Backend RESTful API untuk **DinoyoCraft**, platform e-commerce multi-vendor, katalog produk, dan wisata edukasi keramik khas **Kampung Wisata Keramik Dinoyo, Kota Malang**. Layanan backend ini menangani seluruh logika bisnis, manajemen peran (RBAC), autentikasi ganda (JWT & Google OAuth), validasi input *fail-fast* terpusat (Zod), obrolan real-time via Pusher dengan enkripsi database (AES-256-CBC), transaksi checkout pesanan, ulasan dan penilaian produk, manajemen buku alamat, panel moderasi admin, penyimpanan media, asisten cerdas berbasis Google Gemini AI, hingga audit logging otomatis.
+Backend RESTful API untuk **DinoyoCraft**, platform e-commerce multi-vendor dan katalog keramik khas **Kampung Wisata Keramik Dinoyo, Kota Malang**. Layanan backend ini menangani seluruh logika bisnis e-commerce, manajemen peran (RBAC), autentikasi ganda (JWT & Google OAuth), validasi input *fail-fast* terpusat (Zod), obrolan real-time via Pusher dengan enkripsi database (AES-256-CBC), transaksi checkout pesanan, ulasan dan penilaian produk, manajemen buku alamat, panel moderasi admin, penyimpanan media, asisten cerdas berbasis Google Gemini AI, hingga audit logging otomatis.
 
 ---
 
@@ -54,8 +54,6 @@ Backend RESTful API untuk **DinoyoCraft**, platform e-commerce multi-vendor, kat
     - **Tab 1 — Laporan Pelanggaran**: Penanganan aduan terhadap Toko, Produk, dan Ulasan dengan aksi suspend toko/produk, hapus konten ulasan, atau abaikan laporan.
     - **Tab 2 — Pengajuan Hapus Akun**: Persetujuan atau penolakan pengajuan penghapusan akun customer secara terpusat.
   - Konfigurasi Data Master dinamis (kategori produk, status transaksi, dll.).
-- 🏺 **Wisata Edukasi Keramik (`educational_tours`)**:
-  - Jadwal workshop pembuatan keramik Dinoyo untuk aplikasi mobile & web.
 - 🤖 **Integrasi Google Gemini AI**:
   - Analisis strategi bisnis, rekomendasi harga, dan tren keramik untuk pengrajin Dinoyo.
   - Penyimpanan riwayat konsultasi AI ke database (`ai_analysis_results`).
@@ -178,7 +176,7 @@ ENCRYPTION_KEY=dinoyocraft_secret_key_32_chars!
    ```
 
 > [!IMPORTANT]
-> Skrip `npm run migrate` (`src/scripts/migrate.ts`) secara otomatis membuat seluruh **17 tabel relasional**, menyelaraskan kolom baru secara non-destruktif, serta mengisi data awal (*seed data* akun admin, kategori, profil mitra, master data, dan sampel produk). Skrip ini aman dijalankan berulang kali (*idempotent*).
+> Skrip `npm run migrate` (`src/scripts/migrate.ts`) secara otomatis membuat seluruh **16 tabel relasional**, menyelaraskan kolom baru secara non-destruktif, serta mengisi data awal (*seed data* akun admin, kategori, profil mitra, master data, dan sampel produk). Skrip ini aman dijalankan berulang kali (*idempotent*).
 
 ---
 
@@ -187,7 +185,7 @@ ENCRYPTION_KEY=dinoyocraft_secret_key_32_chars!
 | Perintah | Deskripsi |
 | :--- | :--- |
 | `npm run dev` | Menjalankan server dalam mode pengembangan dengan *hot-reload* (`tsx watch`) |
-| `npm run migrate` | Menjalankan migrasi database dan sinkronisasi 17 tabel relasional |
+| `npm run migrate` | Menjalankan migrasi database dan sinkronisasi 16 tabel relasional |
 | `npm run build` | Melakukan kompilasi kode TypeScript ke JavaScript di direktori `dist/` |
 | `npm run start` | Menjalankan build produksi dari `dist/server.js` |
 | `npm run type-check` | Memeriksa validitas tipe TypeScript tanpa melakukan kompilasi file |
@@ -270,20 +268,14 @@ Base URL: `http://localhost:5000/api`
 | `PATCH` | `/api/notifications/read-all` | Bearer | All | Menandai semua notifikasi telah dibaca |
 | `DELETE` | `/api/notifications/:id` | Bearer | All | Menghapus notifikasi |
 
-### 8. Wisata Edukasi Keramik & Master Data (`/api/tours`)
-| Method | Endpoint | Auth | Role | Deskripsi |
-| :--- | :--- | :---: | :---: | :--- |
-| `GET` | `/api/tours` | Publik | - | Mengambil jadwal workshop & wisata edukasi keramik Dinoyo |
-| `GET` | `/api/tours/master-data` | Publik | - | Mengambil parameter dinamis platform per kategori |
-
-### 9. Percakapan Real-Time & Terenkripsi (`/api/chat`) — *Zod Validated*
+### 8. Percakapan Real-Time & Terenkripsi (`/api/chat`) — *Zod Validated*
 | Method | Endpoint | Auth | Role | Deskripsi |
 | :--- | :--- | :---: | :---: | :--- |
 | `POST` | `/api/chat/send/:targetUserId` | Bearer | All | Mengirim pesan (dienkripsi AES-256 ke DB & ditrigger ke Pusher) |
 | `GET` | `/api/chat/messages/:targetUserId` | Bearer | All | Mengambil riwayat pesan antara dua pengguna (otomatis didekripsi) |
 | `GET` | `/api/chat/contacts` | Bearer | All | Mengambil daftar kontak percakapan, pratinjau pesan terakhir & jumlah unread |
 
-### 10. Portal & Toko Mitra (`/api/mitra`)
+### 9. Portal & Toko Mitra (`/api/mitra`)
 | Method | Endpoint | Auth | Role | Deskripsi |
 | :--- | :--- | :---: | :---: | :--- |
 | `GET` | `/api/mitra/dashboard` | Bearer | Mitra/Admin | Mengambil data ringkasan metrik dashboard mitra |
@@ -292,7 +284,7 @@ Base URL: `http://localhost:5000/api`
 | `GET` | `/api/mitra/finance` | Bearer | Mitra | Laporan rekapitulasi keuangan & transaksi toko |
 | `PUT` | `/api/mitra/products/:id` | Bearer | Mitra | Memperbarui rincian produk keramik |
 
-### 11. Katalog Produk (`/api/products`) — *Zod Validated*
+### 10. Katalog Produk (`/api/products`) — *Zod Validated*
 | Method | Endpoint | Auth | Role | Deskripsi |
 | :--- | :--- | :---: | :---: | :--- |
 | `GET` | `/api/products` | Bearer | Mitra | Mengambil katalog seluruh produk milik mitra terkait |
@@ -300,7 +292,7 @@ Base URL: `http://localhost:5000/api`
 | `PUT` | `/api/products/:id` | Bearer | Mitra | Mengubah rincian produk (harga, stok, nama, kategori, varian) |
 | `DELETE` | `/api/products/:id` | Bearer | Mitra | Menghapus produk dari katalog (soft delete) |
 
-### 12. Panel Administrator (`/api/admin`) — *Zod Validated*
+### 11. Panel Administrator (`/api/admin`) — *Zod Validated*
 | Method | Endpoint | Auth | Role | Deskripsi |
 | :--- | :--- | :---: | :---: | :--- |
 | `GET` | `/api/admin/dashboard-stats` | Publik / Bearer | Admin | Statistik global pengguna, omzet, dan transaksi sistem |
@@ -311,7 +303,7 @@ Base URL: `http://localhost:5000/api`
 | `GET` | `/api/admin/master-data` | Bearer | Admin | Mengambil data konfigurasi master |
 | `POST` | `/api/admin/master-data` | Bearer | Admin | Menambahkan konfigurasi data master baru |
 
-### 13. Moderasi & Keamanan Admin (`/api/admin/moderation`) — *Zod Validated*
+### 12. Moderasi & Keamanan Admin (`/api/admin/moderation`) — *Zod Validated*
 | Method | Endpoint | Auth | Role | Deskripsi |
 | :--- | :--- | :---: | :---: | :--- |
 | `GET` | `/api/admin/moderation/reports` | Bearer | Admin | Daftar laporan pelanggaran (filter tipe, status, cari, paginasi) |
@@ -319,7 +311,7 @@ Base URL: `http://localhost:5000/api`
 | `GET` | `/api/admin/moderation/account-deletions` | Bearer | Admin | Daftar permohonan penghapusan akun customer |
 | `PUT` | `/api/admin/moderation/account-deletions/:id/action` | Bearer | Admin | Setujui (`approved`) atau tolak (`rejected`) permohonan hapus akun |
 
-### 14. Layanan Cerdas AI Gemini (`/api/ai`) — *Zod Validated*
+### 13. Layanan Cerdas AI Gemini (`/api/ai`) — *Zod Validated*
 | Method | Endpoint | Auth | Role | Deskripsi |
 | :--- | :--- | :---: | :---: | :--- |
 | `POST` | `/api/ai/analyze` | Bearer | Mitra/Admin | Melakukan analisis pasar atau rekomendasi produk keramik |
@@ -327,7 +319,7 @@ Base URL: `http://localhost:5000/api`
 
 ---
 
-## 🗄️ Gambaran 17 Tabel Basis Data Relasional
+## 🗄️ Gambaran 16 Tabel Basis Data Relasional
 
 ```text
 users (id, name, email, password_hash, role, google_id, avatar_url, is_active, ...)
@@ -345,7 +337,6 @@ users (id, name, email, password_hash, role, google_id, avatar_url, is_active, .
   ├── reports (reporter_id -> users.id, type, target_id, reason, status, ...)
   ├── account_deletions (user_id -> users.id, reason, status, requested_at, ...)
   ├── audit_logs (user_id -> users.id, action, table_name, old_values, new_values, ip_address, ...)
-  ├── educational_tours (created_by -> users.id, title, description, image_url, ...)
   ├── master_data (category, key, value, description, created_by -> users.id, ...)
   └── ai_analysis_results (user_id -> users.id, prompt_context, ai_response, ...)
 ```
@@ -373,8 +364,7 @@ DinoyoCraftBE/
 │   │   ├── orderController.ts        # Logic pesanan, checkout, & transaksi
 │   │   ├── productController.ts      # Logic katalog & stok produk
 │   │   ├── reviewController.ts       # Logic ulasan bintang & balasan toko
-│   │   ├── storeController.ts        # Logic profil publik toko
-│   │   └── tourController.ts         # Logic wisata edukasi & master data
+│   │   └── storeController.ts        # Logic profil publik toko
 │   ├── middlewares/            # Middleware Express
 │   │   ├── auditMiddleware.ts        # Logger jejak aktivitas sistem
 │   │   ├── authMiddleware.ts         # JWT verifyToken, requireRole, isAdmin
@@ -394,10 +384,9 @@ DinoyoCraftBE/
 │   │   ├── orderRoutes.ts
 │   │   ├── productRoutes.ts
 │   │   ├── reviewRoutes.ts
-│   │   ├── tourRoutes.ts
 │   │   └── index.ts                  # Central router
 │   ├── scripts/                # Otomasi & skrip migrasi
-│   │   └── migrate.ts                # DDL 17 tabel & seeding data otomatis
+│   │   └── migrate.ts                # DDL 16 tabel & seeding data otomatis
 │   ├── types/                  # Deklarasi tipe TypeScript custom
 │   ├── utils/                  # Utilitas helper
 │   │   ├── encryption.ts             # Enkripsi & dekripsi pesan AES-256-CBC

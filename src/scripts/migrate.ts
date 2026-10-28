@@ -214,10 +214,13 @@ const tables = [
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
     \`sender_id\` int UNSIGNED NOT NULL,
     \`receiver_id\` int UNSIGNED NOT NULL,
-    \`message\` text NOT NULL,
-    \`is_read\` tinyint(1) NOT NULL DEFAULT '0',
+    \`message\` text COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`is_read\` tinyint(1) DEFAULT '0',
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`),
+    KEY \`idx_messages_sender\` (\`sender_id\`),
+    KEY \`idx_messages_receiver\` (\`receiver_id\`),
     FOREIGN KEY (\`sender_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE,
     FOREIGN KEY (\`receiver_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
@@ -264,20 +267,7 @@ const tables = [
     FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE SET NULL ON UPDATE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
-  // 17. educational_tours & master_data & ai_analysis_results
-  `CREATE TABLE IF NOT EXISTS \`educational_tours\` (
-    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`title\` varchar(200) NOT NULL,
-    \`description\` text,
-    \`image_url\` varchar(500) DEFAULT NULL,
-    \`whatsapp_number\` varchar(20) DEFAULT NULL,
-    \`created_by\` int UNSIGNED DEFAULT NULL,
-    \`created_at\` datetime DEFAULT CURRENT_TIMESTAMP,
-    \`updated_at\` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`),
-    FOREIGN KEY (\`created_by\`) REFERENCES \`users\` (\`id\`) ON DELETE SET NULL
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
+  // 17. master_data
   `CREATE TABLE IF NOT EXISTS \`master_data\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
     \`category\` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -292,6 +282,7 @@ const tables = [
     FOREIGN KEY (\`created_by\`) REFERENCES \`users\` (\`id\`) ON UPDATE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
+  // 18. ai_analysis_results
   `CREATE TABLE IF NOT EXISTS \`ai_analysis_results\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
     \`user_id\` int UNSIGNED NOT NULL,
@@ -303,49 +294,6 @@ const tables = [
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`),
     FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE ON UPDATE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
-  `CREATE TABLE IF NOT EXISTS \`messages\` (
-    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`sender_id\` int UNSIGNED NOT NULL,
-    \`receiver_id\` int UNSIGNED NOT NULL,
-    \`message\` text COLLATE utf8mb4_unicode_ci NOT NULL,
-    \`is_read\` tinyint(1) DEFAULT '0',
-    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`),
-    KEY \`idx_messages_sender\` (\`sender_id\`),
-    KEY \`idx_messages_receiver\` (\`receiver_id\`),
-    FOREIGN KEY (\`sender_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE,
-    FOREIGN KEY (\`receiver_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
-  `CREATE TABLE IF NOT EXISTS \`reports\` (
-    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`reporter_id\` int UNSIGNED DEFAULT NULL,
-    \`reporter_name\` varchar(150) NOT NULL,
-    \`type\` varchar(50) NOT NULL,
-    \`target_id\` int UNSIGNED DEFAULT NULL,
-    \`target_name\` varchar(255) NOT NULL,
-    \`reason\` text NOT NULL,
-    \`status\` varchar(50) NOT NULL DEFAULT 'pending',
-    \`resolved_at\` datetime DEFAULT NULL,
-    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
-  `CREATE TABLE IF NOT EXISTS \`account_deletions\` (
-    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`user_id\` int UNSIGNED DEFAULT NULL,
-    \`name\` varchar(100) NOT NULL,
-    \`email\` varchar(255) NOT NULL,
-    \`reason\` text NOT NULL,
-    \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
-    \`resolved_at\` datetime DEFAULT NULL,
-    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
 ];
 
@@ -394,13 +342,16 @@ const runMigration = async () => {
     // 1. Matikan Foreign Key check agar urutan tabel aman
     await db.query('SET FOREIGN_KEY_CHECKS = 0;');
 
-    // 2. Eksekusi DDL pembuatan seluruh tabel
+    // 2. Bersihkan tabel workshop (educational_tours) jika ada karena tampilan workshop 100% statis di Flutter
+    await db.query('DROP TABLE IF EXISTS `educational_tours`;');
+
+    // 3. Eksekusi DDL pembuatan seluruh tabel
     console.log('📦 Membuat tabel database (jika belum ada)...');
     for (const tableSql of tables) {
       await db.query(tableSql);
     }
 
-    // 3. Sinkronisasi kolom tambahan non-destructive untuk database yang sudah terisi
+    // 4. Sinkronisasi kolom tambahan non-destructive untuk database yang sudah terisi
     console.log('🔄 Memeriksa & menyinkronkan kolom tambahan...');
     await ensureColumn('mitra_profiles', 'rejection_reason', 'TEXT NULL AFTER is_verified');
     await ensureColumn('mitra_profiles', 'rating', 'DECIMAL(3,2) DEFAULT 0.00 AFTER is_active');
@@ -422,15 +373,15 @@ const runMigration = async () => {
 
     await ensureColumn('order_items', 'variant', 'VARCHAR(100) NULL AFTER product_id');
 
-    // 4. Seeding data awal aman (INSERT IGNORE)
+    // 5. Seeding data awal aman (INSERT IGNORE)
     console.log('🌱 Menyuntikkan seed data awal (Super Admin & Kategori)...');
     for (const seedSql of seeds) {
       await db.query(seedSql);
     }
 
-    // 5. Hidupkan kembali Foreign Key check
+    // 6. Hidupkan kembali Foreign Key check
     await db.query('SET FOREIGN_KEY_CHECKS = 1;');
-    console.log('✅ Migrasi & Sinkronisasi 17 Tabel Database Berhasil! Database siap digunakan.');
+    console.log('✅ Migrasi & Sinkronisasi Database Berhasil! Database siap digunakan.');
   } catch (error) {
     console.error('❌ Terjadi kesalahan saat migrasi:', error);
   } finally {
