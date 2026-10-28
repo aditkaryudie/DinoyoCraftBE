@@ -625,6 +625,16 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     const expiresAt = Date.now() + 5 * 60 * 1000; // Kadaluarsa dalam 5 menit
     otpStore.set(email.toLowerCase(), { code: otp, email: email.toLowerCase(), verified: false, expiresAt });
 
+    try {
+      const expiresDate = new Date(Date.now() + 5 * 60 * 1000);
+      await db.query(
+        'INSERT INTO user_otps (user_id, otp_code, otp_type, expires_at, is_used) VALUES (?, ?, ?, ?, 0)',
+        [user.id, otp, 'reset_password', expiresDate]
+      );
+    } catch (otpErr) {
+      console.warn('⚠️ Gagal menyimpan OTP ke database (fallback memory tetap aktif):', otpErr);
+    }
+
     // 4. Print ke terminal (Biar kamu tidak perlu nunggu email masuk saat testing!)
     console.log(`\n========================================`);
     console.log(`[DEV OTP] Kode OTP untuk ${email}: ${otp}`);
@@ -683,7 +693,30 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const entry = otpStore.get(email.toLowerCase());
+    let entry = otpStore.get(email.toLowerCase());
+
+    if (!entry) {
+      // Fallback pengecekan ke tabel database user_otps untuk lingkungan Serverless
+      const [dbOtps]: any = await db.query(
+        `SELECT o.id, o.otp_code, o.expires_at 
+         FROM user_otps o
+         JOIN users u ON o.user_id = u.id
+         WHERE u.email = ? AND o.otp_code = ? AND o.is_used = 0 AND o.expires_at > NOW()
+         ORDER BY o.id DESC LIMIT 1`,
+        [email, otp]
+      );
+
+      if (dbOtps && dbOtps.length > 0) {
+        entry = {
+          code: otp,
+          email: email.toLowerCase(),
+          verified: true,
+          expiresAt: Date.now() + 5 * 60 * 1000,
+        };
+        otpStore.set(email.toLowerCase(), entry);
+        await db.query('UPDATE user_otps SET is_used = 1 WHERE id = ?', [dbOtps[0].id]);
+      }
+    }
 
     if (!entry) {
       res.status(400).json({
@@ -747,7 +780,30 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     }
 
     // Cek OTP terverifikasi atau kode OTP cocok
-    const entry = otpStore.get(email.toLowerCase());
+    let entry = otpStore.get(email.toLowerCase());
+
+    if (!entry) {
+      // Fallback pengecekan ke tabel database user_otps untuk lingkungan Serverless
+      const [dbOtps]: any = await db.query(
+        `SELECT o.id, o.otp_code, o.expires_at 
+         FROM user_otps o
+         JOIN users u ON o.user_id = u.id
+         WHERE u.email = ? AND o.otp_code = ? AND o.is_used = 0 AND o.expires_at > NOW()
+         ORDER BY o.id DESC LIMIT 1`,
+        [email, otp]
+      );
+
+      if (dbOtps && dbOtps.length > 0) {
+        entry = {
+          code: otp,
+          email: email.toLowerCase(),
+          verified: true,
+          expiresAt: Date.now() + 5 * 60 * 1000,
+        };
+        otpStore.set(email.toLowerCase(), entry);
+        await db.query('UPDATE user_otps SET is_used = 1 WHERE id = ?', [dbOtps[0].id]);
+      }
+    }
     const isOtpValid = entry && (entry.verified || (otp && entry.code === otp));
 
     if (!entry || !isOtpValid) {
