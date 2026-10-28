@@ -347,6 +347,8 @@ users (id, name, email, password_hash, role, google_id, avatar_url, is_active, .
 
 ```plaintext
 DinoyoCraftBE/
+├── database/                   # Master DDL SQL lengkap & cadangan import manual
+│   └── schema.sql              # Master skema MySQL & seed data awal
 ├── dist/                       # Output kompilasi TypeScript (produksi)
 ├── src/
 │   ├── config/                 # Konfigurasi koneksi MySQL pool & env
