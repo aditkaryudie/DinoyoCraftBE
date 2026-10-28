@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getAuthLocals = exports.requireRole = exports.verifyToken = void 0;
+exports.getAuthLocals = exports.isAdmin = exports.requireRole = exports.verifyToken = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const response_js_1 = require("../utils/response.js");
 const JWT_SECRET = process.env['JWT_SECRET'];
@@ -83,6 +83,11 @@ const requireRole = (allowedRoles) => {
     };
 };
 exports.requireRole = requireRole;
+/**
+ * isAdmin
+ * Middleware khusus admin (shortcut untuk requireRole(['admin']))
+ */
+exports.isAdmin = (0, exports.requireRole)(['admin']);
 /**
  * Helper untuk mengambil data auth dari res.locals secara type-safe
  */

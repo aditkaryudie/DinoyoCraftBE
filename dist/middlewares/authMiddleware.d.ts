@@ -13,6 +13,11 @@ export declare const verifyToken: (req: Request, res: Response, next: NextFuncti
  */
 export declare const requireRole: (allowedRoles: UserRole[]) => (_req: Request, res: Response, next: NextFunction) => void;
 /**
+ * isAdmin
+ * Middleware khusus admin (shortcut untuk requireRole(['admin']))
+ */
+export declare const isAdmin: (_req: Request, res: Response, next: NextFunction) => void;
+/**
  * Helper untuk mengambil data auth dari res.locals secara type-safe
  */
 export declare const getAuthLocals: (res: Response) => {

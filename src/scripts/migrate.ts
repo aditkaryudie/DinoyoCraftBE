@@ -303,6 +303,49 @@ const tables = [
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`),
     FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  `CREATE TABLE IF NOT EXISTS \`messages\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`sender_id\` int UNSIGNED NOT NULL,
+    \`receiver_id\` int UNSIGNED NOT NULL,
+    \`message\` text COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`is_read\` tinyint(1) DEFAULT '0',
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_messages_sender\` (\`sender_id\`),
+    KEY \`idx_messages_receiver\` (\`receiver_id\`),
+    FOREIGN KEY (\`sender_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE,
+    FOREIGN KEY (\`receiver_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  `CREATE TABLE IF NOT EXISTS \`reports\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`reporter_id\` int UNSIGNED DEFAULT NULL,
+    \`reporter_name\` varchar(150) NOT NULL,
+    \`type\` varchar(50) NOT NULL,
+    \`target_id\` int UNSIGNED DEFAULT NULL,
+    \`target_name\` varchar(255) NOT NULL,
+    \`reason\` text NOT NULL,
+    \`status\` varchar(50) NOT NULL DEFAULT 'pending',
+    \`resolved_at\` datetime DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  `CREATE TABLE IF NOT EXISTS \`account_deletions\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED DEFAULT NULL,
+    \`name\` varchar(100) NOT NULL,
+    \`email\` varchar(255) NOT NULL,
+    \`reason\` text NOT NULL,
+    \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    \`resolved_at\` datetime DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
 ];
 

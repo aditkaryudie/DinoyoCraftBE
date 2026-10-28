@@ -12,5 +12,9 @@ const router = express_1.default.Router();
 router.get('/dashboard', authMiddleware_js_1.verifyToken, mitraController_js_1.getDashboardMitra);
 // Route untuk halaman Toko Saya
 router.get('/store-profile', authMiddleware_js_1.verifyToken, storeController_js_1.getStoreProfile);
+// 3 Endpoint Baru Mitra
+router.get('/finance', authMiddleware_js_1.verifyToken, mitraController_js_1.getFinanceReport);
+router.get('/orders', authMiddleware_js_1.verifyToken, mitraController_js_1.getOrders);
+router.put('/products/:id', authMiddleware_js_1.verifyToken, mitraController_js_1.updateProduct);
 exports.default = router;
 //# sourceMappingURL=mitraRoutes.js.map

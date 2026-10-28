@@ -2,14 +2,13 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
-// 1. Kunci target ke folder DinoyoCraftBE/uploads
+// Pastikan folder uploads tersedia secara otomatis
 const targetFolder = path.join(process.cwd(), 'uploads');
-
-// 2. Buat folder otomatis jika tidak sengaja terhapus/belum ada
 if (!fs.existsSync(targetFolder)) {
   fs.mkdirSync(targetFolder, { recursive: true });
 }
 
+// Konfigurasi penyimpanan file menggunakan DiskStorage
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, targetFolder); // <-- Pastikan Multer menembak ke targetFolder
@@ -24,7 +23,8 @@ const storage = multer.diskStorage({
 export const uploadMitraDocs = multer({ storage }).fields([
   { name: 'ktp_file', maxCount: 1 },
   { name: 'nib_file', maxCount: 1 },
-  { name: 'product_images', maxCount: 3 },
+  { name: 'product_images', maxCount: 5 },
+  { name: 'sample_product_images', maxCount: 5 },
 ]);
 
 export const uploadProfileImages = multer({ storage }).fields([
@@ -33,4 +33,4 @@ export const uploadProfileImages = multer({ storage }).fields([
 ]);
 
 const upload = multer({ storage });
-export default upload;
+export default upload;

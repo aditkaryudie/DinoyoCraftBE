@@ -10,7 +10,6 @@ import {
   resetPassword,
   reuploadDocs
 } from '../controllers/authController';
-// Gabungkan uploadProfileImages ke dalam import uploadMiddleware di bawah ini:
 import { uploadMitraDocs, uploadProfileImages } from '../middlewares/uploadMiddleware';
 import { verifyToken } from '../middlewares/authMiddleware';
 

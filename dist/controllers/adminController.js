@@ -199,7 +199,7 @@ const getVerifikasiList = async (_req, res) => {
         m.ktp_file_url, 
         m.nib_file_url, 
         m.is_verified,
-          m.rejection_reason, 
+        m.rejection_reason,
         m.is_active, 
         m.created_at, 
         u.name AS owner_name, 

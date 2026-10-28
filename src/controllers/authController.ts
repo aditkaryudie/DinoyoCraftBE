@@ -21,6 +21,26 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    const nameRegex = /^[a-zA-Z\s]+$/;
+    if (!nameRegex.test(name.trim())) {
+      await connection.rollback();
+      res.status(400).json({ message: 'Format nama tidak valid (hanya huruf dan spasi)' });
+      return;
+    }
+
+    const phoneRegex = /^[0-9]+$/;
+    if (!phoneRegex.test(whatsapp_number.trim())) {
+      await connection.rollback();
+      res.status(400).json({ message: 'Nomor HP hanya boleh berisi angka' });
+      return;
+    }
+
+    if (whatsapp_number.trim().length < 10 || whatsapp_number.trim().length > 14) {
+      await connection.rollback();
+      res.status(400).json({ message: 'Nomor HP harus 10-14 digit' });
+      return;
+    }
+
     if (!files || !files.ktp_file || !files.nib_file || !files.product_images) {
       await connection.rollback();
       res.status(400).json({ message: 'File KTP, NIB, dan Foto Produk wajib diunggah' });
@@ -138,7 +158,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
 
     const query = `
       SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
-             m.store_name, m.is_verified, m.rejection_reason 
+             m.store_name, m.is_verified, m.rejection_reason
       FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE u.email = ?
@@ -174,10 +194,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    // ============================================================
-    // 🔒 PROTEKSI VERIFIKASI MITRA (TAMBAHAN LOGIK)
-    // ============================================================
-    // Unverified / rejected mitra allowed to login to view profile and status
+    // Mitra belum terverifikasi / ditolak tetap diizinkan login
 
     if (!user.password_hash) {
       res.status(400).json({
@@ -302,7 +319,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
 
     const query = `
       SELECT u.id, u.name, u.email, u.role, u.is_active, u.google_id, u.avatar_url,
-             m.store_name, m.is_verified, m.rejection_reason 
+             m.store_name, m.is_verified, m.rejection_reason
       FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE (u.google_id IS NOT NULL AND u.google_id = ?) OR u.email = ?
@@ -377,10 +394,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
-    // ============================================================
-    // 🔒 PROTEKSI VERIFIKASI MITRA UNTUK GOOGLE LOGIN
-    // ============================================================
-    // Unverified / rejected mitra allowed to login via Google
+    // Mitra belum terverifikasi / ditolak Google login diizinkan
 
     const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
     const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
@@ -793,7 +807,7 @@ export const reuploadDocs = async (req: Request, res: Response): Promise<void> =
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
     const ktpFile = files?.ktp_file?.[0];
     const nibFile = files?.nib_file?.[0];
-    const productImages = files?.product_images;
+    const productImages = files?.product_images || files?.sample_product_images;
 
     if (!ktpFile && !nibFile && (!productImages || productImages.length === 0)) {
       res.status(400).json({ success: false, message: 'Harap unggah minimal satu dokumen untuk diperbaiki.' });

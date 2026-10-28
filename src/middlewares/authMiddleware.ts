@@ -94,6 +94,12 @@ export const requireRole = (allowedRoles: UserRole[]) => {
 };
 
 /**
+ * isAdmin
+ * Middleware khusus admin (shortcut untuk requireRole(['admin']))
+ */
+export const isAdmin = requireRole(['admin']);
+
+/**
  * Helper untuk mengambil data auth dari res.locals secara type-safe
  */
 export const getAuthLocals = (

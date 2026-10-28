@@ -19,6 +19,7 @@ const auditMiddleware_js_1 = require("./middlewares/auditMiddleware.js");
 const authRoutes_js_1 = __importDefault(require("./routes/authRoutes.js"));
 const productRoutes_js_1 = __importDefault(require("./routes/productRoutes.js"));
 const mitraRoutes_js_1 = __importDefault(require("./routes/mitraRoutes.js"));
+const chatRoutes_js_1 = __importDefault(require("./routes/chatRoutes.js"));
 const path_1 = __importDefault(require("path"));
 // Load environment variables SEBELUM apapun
 dotenv_1.default.config();
@@ -88,6 +89,7 @@ app.use('/uploads', express_1.default.static(targetFolder));
 app.use('/api/auth', authRoutes_js_1.default);
 app.use('/api/products', productRoutes_js_1.default);
 app.use('/api/mitra', mitraRoutes_js_1.default);
+app.use('/api/chat', chatRoutes_js_1.default);
 // -------------------------------------------------------
 // 6. Router Utama
 // -------------------------------------------------------
