@@ -13,3 +13,4 @@ router.get('/', getEducationalTours);
 router.get('/master-data', getMasterData);
 
 export default router;
+

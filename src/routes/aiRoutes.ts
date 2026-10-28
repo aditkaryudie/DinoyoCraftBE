@@ -6,10 +6,8 @@
 import { Router } from 'express';
 import * as aiController from '../controllers/aiController.js';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
-import {
-  validateBody,
-  aiAnalysisValidationRules,
-} from '../middlewares/validatorMiddleware.js';
+import { validateZod } from '../middlewares/validatorMiddleware.js';
+import { aiAnalysisSchema } from '../validators/schemas.js';
 
 const router = Router();
 
@@ -24,7 +22,7 @@ router.use(verifyToken);
 router.post(
   '/analyze',
   requireRole(['mitra', 'admin']),
-  validateBody(aiAnalysisValidationRules),
+  validateZod(aiAnalysisSchema),
   aiController.analyzeWithAI
 );
 

@@ -1,19 +1,20 @@
+// ============================================================
+//  src/routes/chatRoutes.ts
+//  Router Live Chat Terenkripsi & Pusher Realtime
+// ============================================================
+
 import { Router } from 'express';
 import { sendMessage, getMessages, getChatContacts } from '../controllers/chatController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
+import { validateZod } from '../middlewares/validatorMiddleware.js';
+import { sendMessageSchema } from '../validators/schemas.js';
 
 const router = Router();
 
-// Semua rute chat memerlukan autentikasi login
 router.use(verifyToken);
 
-// Mengambil daftar kontak percakapan
 router.get('/contacts', getChatContacts);
-
-// Mengambil pesan percakapan dengan target user tertentu
 router.get('/messages/:targetUserId', getMessages);
-
-// Mengirim pesan ke target user tertentu (mentrigger Pusher event)
-router.post('/send/:targetUserId', sendMessage);
+router.post('/send/:targetUserId', validateZod(sendMessageSchema), sendMessage);
 
 export default router;

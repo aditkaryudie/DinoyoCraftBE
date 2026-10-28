@@ -6,7 +6,12 @@
 import { Router } from 'express';
 import * as adminController from '../controllers/adminController.js';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
-import { validateBody } from '../middlewares/validatorMiddleware.js';
+import { validateZod } from '../middlewares/validatorMiddleware.js';
+import {
+  updateUserStatusSchema,
+  createMasterDataSchema,
+  verifyMitraStoreSchema,
+} from '../validators/schemas.js';
 
 const router = Router();
 
@@ -34,7 +39,7 @@ router.get('/users', adminController.getAllUsers);
  */
 router.patch(
   '/users/:id/status',
-  validateBody([{ field: 'is_active', required: true, type: 'boolean' }]),
+  validateZod(updateUserStatusSchema),
   adminController.updateUserStatus
 );
 
@@ -52,11 +57,7 @@ router.get('/master-data', adminController.getMasterData);
  */
 router.post(
   '/master-data',
-  validateBody([
-    { field: 'category', required: true, type: 'string', minLength: 1, maxLength: 50 },
-    { field: 'key', required: true, type: 'string', minLength: 1, maxLength: 100 },
-    { field: 'value', required: true, type: 'string', minLength: 1 },
-  ]),
+  validateZod(createMasterDataSchema),
   adminController.createMasterData
 );
 
@@ -74,7 +75,7 @@ router.get('/verifikasi', adminController.getVerifikasiList);
  */
 router.patch(
   '/verifikasi/:id',
-  validateBody([{ field: 'status', required: true, type: 'string' }]),
+  validateZod(verifyMitraStoreSchema),
   adminController.verifyMitraStore
 );
 

@@ -32,3 +32,4 @@ router.get('/:id', getOrderById);
 router.patch('/:id/status', validateZod(updateOrderStatusSchema), updateOrderStatus);
 
 export default router;
+
