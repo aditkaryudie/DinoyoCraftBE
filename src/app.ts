@@ -5,6 +5,8 @@
 
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import router from './routes/index.js';
 import { notFound, globalErrorHandler } from './middlewares/errorMiddleware.js';
@@ -31,9 +33,27 @@ app.use(
   })
 );
 
-// Tambahkan di bawah blok konfigurasi CORS Anda
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 2. Keamanan — Helmet
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+export const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 500,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Terlalu banyak permintaan dari IP ini, silakan coba lagi setelah 15 menit.',
+  },
+});
+app.use('/api', apiLimiter);
+
+
 
 // -------------------------------------------------------
 // 2. Body Parsing
