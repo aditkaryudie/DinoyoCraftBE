@@ -96,11 +96,10 @@ Sebelum menjalankan proyek, pastikan perangkat lokal Anda telah terpasang:
 
 ## 🚀 Panduan Instalasi & Setup Lokal
 
-### 1. Clone Repositori & Pilih Branch
+### 1. Clone Repositori
 ```bash
 git clone https://github.com/aditkaryudie/DinoyoCraftBE.git
 cd DinoyoCraftBE
-git checkout ali   # Branch pengembangan aktif
 ```
 
 ### 2. Install Dependensi
@@ -410,7 +409,7 @@ DinoyoCraftBE/
 
 ---
 
-## 🔒 Praktik Keamanan & Git Workflow
+## 🔒 Praktik Keamanan & Format Data
 
 1. **Jaga Kerahasiaan Berkas `.env`**: Jangan pernah mengunggah file `.env` ke GitHub atau sistem kendali versi lainnya.
 2. **Kunci Enkripsi `ENCRYPTION_KEY`**: Pastikan kunci enkripsi selalu memiliki panjang tepat 32 karakter dan tidak diubah sembarangan di lingkungan produksi agar riwayat chat lama tetap dapat didekripsi.
@@ -423,6 +422,3 @@ DinoyoCraftBE/
      "data": {}
    }
    ```
-5. **Git Workflow**:
-   - Branch **`ali`**: Branch pengembangan fitur aktif. Seluruh pembaruan backend dikerjakan dan di-push ke branch ini.
-   - Branch **`main`**: Branch rilis produksi stabil.
