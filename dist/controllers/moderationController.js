@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleDeletionAction = exports.getDeletionRequests = exports.handleReportAction = exports.getReports = void 0;
+exports.submitAccountDeletion = exports.submitReport = exports.handleDeletionAction = exports.getDeletionRequests = exports.handleReportAction = exports.getReports = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 let tablesInitialized = false;
 /**
@@ -323,4 +323,65 @@ const handleDeletionAction = async (req, res) => {
     }
 };
 exports.handleDeletionAction = handleDeletionAction;
+const submitReport = async (req, res) => {
+    try {
+        await ensureModerationTables();
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        const { type, target_id, target_name, reason } = req.body;
+        if (!type || !reason) {
+            res.status(400).json({ success: false, message: 'Tipe dan alasan laporan wajib diisi' });
+            return;
+        }
+        let reporterName = 'Pengguna';
+        if (userId) {
+            const [uRows] = await database_js_1.default.query('SELECT name FROM users WHERE id = ?', [userId]);
+            if (uRows && uRows.length > 0)
+                reporterName = uRows[0].name;
+        }
+        const [result] = await database_js_1.default.query(`INSERT INTO reports (reporter_id, reporter_name, type, target_id, target_name, reason, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`, [userId || null, reporterName, type, target_id || null, target_name || '-', reason]);
+        res.status(201).json({
+            success: true,
+            message: 'Laporan Anda telah diterima dan akan ditinjau oleh tim kami.',
+            reportId: result.insertId
+        });
+    }
+    catch (error) {
+        console.error('Error submitReport:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengirim laporan', error: error.message });
+    }
+};
+exports.submitReport = submitReport;
+const submitAccountDeletion = async (req, res) => {
+    try {
+        await ensureModerationTables();
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        const { reason, email, name } = req.body;
+        let userEmail = email;
+        let userName = name;
+        if (userId) {
+            const [uRows] = await database_js_1.default.query('SELECT name, email FROM users WHERE id = ?', [userId]);
+            if (uRows && uRows.length > 0) {
+                userEmail = uRows[0].email;
+                userName = uRows[0].name;
+            }
+        }
+        if (!userEmail || !reason) {
+            res.status(400).json({ success: false, message: 'Email dan alasan penghapusan akun wajib diisi' });
+            return;
+        }
+        const [result] = await database_js_1.default.query(`INSERT INTO account_deletions (user_id, name, email, reason, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`, [userId || null, userName || 'Pengguna', userEmail, reason]);
+        res.status(201).json({
+            success: true,
+            message: 'Permohonan penghapusan akun telah dicatat.',
+            requestId: result.insertId
+        });
+    }
+    catch (error) {
+        console.error('Error submitAccountDeletion:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengajukan penghapusan akun', error: error.message });
+    }
+};
+exports.submitAccountDeletion = submitAccountDeletion;
 //# sourceMappingURL=moderationController.js.map

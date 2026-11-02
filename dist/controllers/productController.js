@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.hapusProduk = exports.tambahProduk = exports.getProdukMitra = void 0;
+exports.getPublicProductDetail = exports.getPublicProducts = exports.hapusProduk = exports.tambahProduk = exports.getProdukMitra = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const getProdukMitra = async (req, res) => {
     try {
@@ -146,4 +146,212 @@ const hapusProduk = async (req, res) => {
     }
 };
 exports.hapusProduk = hapusProduk;
+const getPublicProducts = async (req, res) => {
+    try {
+        const { category, search, sort, page = '1', limit = '20' } = req.query;
+        const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+        const limitNum = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 20));
+        const offset = (pageNum - 1) * limitNum;
+        const conditions = ['(p.is_deleted = 0 OR p.is_deleted IS NULL)'];
+        const params = [];
+        if (category) {
+            conditions.push('(c.name = ? OR c.id = ?)');
+            params.push(category, category);
+        }
+        if (search) {
+            conditions.push('(p.name LIKE ? OR p.description LIKE ?)');
+            params.push(`%${search}%`, `%${search}%`);
+        }
+        let orderBy = 'p.created_at DESC';
+        if (sort === 'price_asc') {
+            orderBy = 'p.price ASC';
+        }
+        else if (sort === 'price_desc') {
+            orderBy = 'p.price DESC';
+        }
+        else if (sort === 'name_asc') {
+            orderBy = 'p.name ASC';
+        }
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const query = `
+      SELECT 
+        p.id,
+        p.mitra_id,
+        p.category_id,
+        p.name,
+        p.name AS title,
+        p.description,
+        p.price,
+        p.stock,
+        p.image_urls,
+        p.created_at,
+        p.updated_at,
+        COALESCE(c.name, 'Keramik') AS category,
+        COALESCE(c.name, 'Keramik') AS category_name,
+        COALESCE(m.store_name, 'Toko Keramik') AS studio,
+        COALESCE(m.store_name, 'Toko Keramik') AS store_name,
+        m.workshop_address,
+        m.avatar_url AS store_avatar_url
+      FROM products p
+      LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      ${whereClause}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `;
+        params.push(limitNum, offset);
+        const [rows] = await database_js_1.default.query(query, params);
+        const products = rows.map((row) => {
+            let imageUrls = [];
+            if (row.image_urls) {
+                try {
+                    const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
+                    if (Array.isArray(parsed)) {
+                        imageUrls = parsed;
+                    }
+                    else if (typeof parsed === 'string') {
+                        imageUrls = [parsed];
+                    }
+                }
+                catch {
+                    imageUrls = [String(row.image_urls)];
+                }
+            }
+            const mainImage = imageUrls.length > 0 ? imageUrls[0] : '';
+            return {
+                id: String(row.id),
+                name: row.name,
+                title: row.title,
+                description: row.description || '',
+                price: Number(row.price),
+                stock: Number(row.stock),
+                category: row.category,
+                category_id: row.category_id,
+                category_name: row.category_name,
+                studio: row.studio,
+                store_name: row.store_name,
+                workshop_address: row.workshop_address,
+                mitra_id: row.mitra_id,
+                rating: 4.8,
+                image: mainImage || 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?auto=format&fit=crop&w=400&q=80',
+                image_url: mainImage,
+                images: imageUrls,
+                created_at: row.created_at,
+            };
+        });
+        res.status(200).json({
+            success: true,
+            message: 'Berhasil mengambil katalog produk publik',
+            data: products,
+            meta: {
+                page: pageNum,
+                limit: limitNum,
+                count: products.length,
+                timestamp: new Date().toISOString()
+            }
+        });
+    }
+    catch (error) {
+        console.error('Error getPublicProducts:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengambil data produk' });
+    }
+};
+exports.getPublicProducts = getPublicProducts;
+const getPublicProductDetail = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const query = `
+      SELECT 
+        p.id,
+        p.mitra_id,
+        p.category_id,
+        p.name,
+        p.name AS title,
+        p.description,
+        p.price,
+        p.stock,
+        p.image_urls,
+        p.created_at,
+        p.updated_at,
+        COALESCE(c.name, 'Keramik') AS category,
+        COALESCE(c.name, 'Keramik') AS category_name,
+        COALESCE(m.store_name, 'Toko Keramik') AS studio,
+        COALESCE(m.store_name, 'Toko Keramik') AS store_name,
+        m.workshop_address,
+        m.whatsapp_number,
+        m.description AS store_description,
+        m.avatar_url AS store_avatar_url,
+        m.banner_url AS store_banner_url
+      FROM products p
+      LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
+      LIMIT 1
+    `;
+        const [rows] = await database_js_1.default.query(query, [id]);
+        if (!rows || rows.length === 0) {
+            res.status(404).json({ success: false, message: 'Produk tidak ditemukan' });
+            return;
+        }
+        const row = rows[0];
+        let imageUrls = [];
+        if (row.image_urls) {
+            try {
+                const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
+                if (Array.isArray(parsed)) {
+                    imageUrls = parsed;
+                }
+                else if (typeof parsed === 'string') {
+                    imageUrls = [parsed];
+                }
+            }
+            catch {
+                imageUrls = [String(row.image_urls)];
+            }
+        }
+        const mainImage = imageUrls.length > 0 ? imageUrls[0] : '';
+        const product = {
+            id: String(row.id),
+            name: row.name,
+            title: row.title,
+            description: row.description || '',
+            price: Number(row.price),
+            stock: Number(row.stock),
+            category: row.category,
+            category_id: row.category_id,
+            category_name: row.category_name,
+            studio: row.studio,
+            store_name: row.store_name,
+            mitra_id: row.mitra_id,
+            rating: 4.8,
+            image: mainImage,
+            image_url: mainImage,
+            images: imageUrls,
+            store: {
+                id: row.mitra_id,
+                name: row.store_name,
+                store_name: row.store_name,
+                location: row.workshop_address,
+                workshop_address: row.workshop_address,
+                whatsapp_number: row.whatsapp_number,
+                description: row.store_description,
+                avatar_url: row.store_avatar_url,
+                banner_url: row.store_banner_url,
+                rating: 4.9,
+            },
+            created_at: row.created_at,
+        };
+        res.status(200).json({
+            success: true,
+            message: 'Detail produk berhasil diambil',
+            data: product,
+            meta: { timestamp: new Date().toISOString() }
+        });
+    }
+    catch (error) {
+        console.error('Error getPublicProductDetail:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengambil detail produk' });
+    }
+};
+exports.getPublicProductDetail = getPublicProductDetail;
 //# sourceMappingURL=productController.js.map

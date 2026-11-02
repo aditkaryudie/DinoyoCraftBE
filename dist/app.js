@@ -13,26 +13,23 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const index_js_1 = __importDefault(require("./routes/index.js"));
 const errorMiddleware_js_1 = require("./middlewares/errorMiddleware.js");
 const auditMiddleware_js_1 = require("./middlewares/auditMiddleware.js");
-const authRoutes_js_1 = __importDefault(require("./routes/authRoutes.js"));
-const productRoutes_js_1 = __importDefault(require("./routes/productRoutes.js"));
-const mitraRoutes_js_1 = __importDefault(require("./routes/mitraRoutes.js"));
-const chatRoutes_js_1 = __importDefault(require("./routes/chatRoutes.js"));
 const path_1 = __importDefault(require("path"));
 // Load environment variables SEBELUM apapun
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 // -------------------------------------------------------
-// 1. CORS — Konfigurasi origin yang diizinkan
+// 1. CORS — Konfigurasi origin ramah Mobile & Web
 // -------------------------------------------------------
 app.use((0, cors_1.default)({
-    origin: process.env['FRONTEND_URL'] || 'http://localhost:3000', // Wajib URL frontend secara spesifik
-    credentials: true, // Wajib true agar cookie/token bisa lewat
+    origin: (_origin, callback) => {
+        // Izinkan request tanpa origin (seperti aplikasi native Flutter, Postman, emulator)
+        // serta origin browser web frontend
+        callback(null, true);
+    },
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
-// Tambahkan di bawah blok konfigurasi CORS Anda
-app.use(express_1.default.json());
-app.use(express_1.default.urlencoded({ extended: true }));
 // -------------------------------------------------------
 // 2. Body Parsing
 // -------------------------------------------------------
@@ -55,7 +52,7 @@ app.use(auditMiddleware_js_1.auditLogger);
 // -------------------------------------------------------
 // 5. Health Check — sebelum router utama
 // -------------------------------------------------------
-app.get('/health', (_req, res) => {
+app.get(['/health', '/api/health'], (_req, res) => {
     res.status(200).json({
         success: true,
         message: 'DinoyoCraft API is running 🚀',
@@ -63,17 +60,10 @@ app.get('/health', (_req, res) => {
         environment: process.env['NODE_ENV'] ?? 'development',
     });
 });
-// 1. Kunci target folder baca agar PERSIS SAMA dengan Multer
+// Kunci target folder baca agar PERSIS SAMA dengan Multer
 const targetFolder = path_1.default.join(process.cwd(), 'uploads');
-// 2. Tampilkan di terminal untuk memastikan tidak salah folder
 console.log('📂 Static Server membaca dari:', targetFolder);
-// 3. Pasang middleware statis (HARUS DI ATAS app.use('/api/...'))
 app.use('/uploads', express_1.default.static(targetFolder));
-// Rute Utama
-app.use('/api/auth', authRoutes_js_1.default);
-app.use('/api/products', productRoutes_js_1.default);
-app.use('/api/mitra', mitraRoutes_js_1.default);
-app.use('/api/chat', chatRoutes_js_1.default);
 // -------------------------------------------------------
 // 6. Router Utama
 // -------------------------------------------------------

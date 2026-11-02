@@ -1,5 +1,8 @@
 import mysql from 'mysql2/promise';
-declare const pool: mysql.Pool;
+import { Sequelize } from 'sequelize';
+export declare const pool: mysql.Pool;
+export declare const sequelize: Sequelize;
 export declare const testConnection: () => Promise<void>;
-export default pool;
+declare const _default: mysql.Pool & Sequelize;
+export default _default;
 //# sourceMappingURL=database.d.ts.map

@@ -3,12 +3,91 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.reuploadDocs = exports.resetPassword = exports.verifyOtp = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.googleLogin = exports.loginMitra = exports.registerMitra = void 0;
+exports.reuploadDocs = exports.resetPassword = exports.verifyOtp = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.googleLogin = exports.loginMitra = exports.registerMitra = exports.saveFcmToken = exports.registerCustomer = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const google_auth_library_1 = require("google-auth-library");
 const database_1 = __importDefault(require("../config/database"));
 const nodemailer_1 = __importDefault(require("nodemailer"));
+const registerCustomer = async (req, res) => {
+    try {
+        const { name, email, password, phone } = req.body;
+        if (!name || !email || !password) {
+            res.status(400).json({
+                success: false,
+                message: 'Nama, email, dan password wajib diisi',
+                meta: { timestamp: new Date().toISOString() }
+            });
+            return;
+        }
+        if (password.length < 6) {
+            res.status(400).json({
+                success: false,
+                message: 'Password minimal 6 karakter',
+                meta: { timestamp: new Date().toISOString() }
+            });
+            return;
+        }
+        const [existingUsers] = await database_1.default.query('SELECT id FROM users WHERE email = ?', [email.trim().toLowerCase()]);
+        if (existingUsers && existingUsers.length > 0) {
+            res.status(409).json({
+                success: false,
+                message: 'Email sudah terdaftar. Silakan login atau gunakan email lain.',
+                meta: { timestamp: new Date().toISOString() }
+            });
+            return;
+        }
+        const passwordHash = await bcrypt_1.default.hash(password, 10);
+        const [result] = await database_1.default.query('INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, "pengunjung", 1)', [name.trim(), email.trim().toLowerCase(), passwordHash]);
+        const newUserId = result.insertId;
+        if (phone && phone.trim()) {
+            await database_1.default.query('INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1)', [newUserId, name.trim(), phone.trim(), 'Belum ada alamat lengkap']).catch(() => { });
+        }
+        const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+        const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+        const token = jsonwebtoken_1.default.sign({ userId: newUserId, email: email.trim().toLowerCase(), role: 'pengunjung' }, jwtSecret, { expiresIn: jwtExpiresIn });
+        res.status(201).json({
+            success: true,
+            message: 'Pendaftaran pengunjung berhasil!',
+            data: {
+                token,
+                id: newUserId,
+                name: name.trim(),
+                email: email.trim().toLowerCase(),
+                role: 'pengunjung',
+            },
+            meta: { timestamp: new Date().toISOString() }
+        });
+    }
+    catch (error) {
+        console.error('Error register customer:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Terjadi kesalahan pada server saat pendaftaran.',
+            meta: { timestamp: new Date().toISOString() }
+        });
+    }
+};
+exports.registerCustomer = registerCustomer;
+const saveFcmToken = async (req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        const { fcm_token, platform = 'android' } = req.body;
+        if (!fcm_token) {
+            res.status(400).json({ success: false, message: 'FCM Token wajib dikirim' });
+            return;
+        }
+        await database_1.default.query(`INSERT INTO user_device_tokens (user_id, fcm_token, platform)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE platform = VALUES(platform), updated_at = NOW()`, [userId, fcm_token, platform]);
+        res.status(200).json({ success: true, message: 'FCM token berhasil disinkronkan' });
+    }
+    catch (error) {
+        console.error('Error save FCM token:', error);
+        res.status(500).json({ success: false, message: 'Gagal menyimpan FCM token' });
+    }
+};
+exports.saveFcmToken = saveFcmToken;
 const registerMitra = async (req, res) => {
     const connection = await database_1.default.getConnection();
     try {
@@ -294,8 +373,8 @@ const googleLogin = async (req, res) => {
                 res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
                 return;
             }
-            if (user.role !== 'mitra' && user.role !== 'admin') {
-                res.status(403).json({ message: 'Akses ditolak. Akun ini bukan akun Mitra atau Admin.' });
+            if (user.role !== 'mitra' && user.role !== 'admin' && user.role !== 'pengunjung') {
+                res.status(403).json({ message: 'Akses ditolak. Peran pengguna tidak diizinkan.' });
                 return;
             }
             if (!user.google_id || !user.avatar_url) {
@@ -306,28 +385,31 @@ const googleLogin = async (req, res) => {
             const connection = await database_1.default.getConnection();
             try {
                 await connection.beginTransaction();
-                const [insertUser] = await connection.query('INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, NULL, ?, 1, ?, ?)', [name, email, 'mitra', googleId || null, avatarUrl || null]);
+                const targetRole = (req.body.role === 'pengunjung') ? 'pengunjung' : 'mitra';
+                const [insertUser] = await connection.query('INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, NULL, ?, 1, ?, ?)', [name, email, targetRole, googleId || null, avatarUrl || null]);
                 const newUserId = insertUser.insertId;
-                await connection.query(`INSERT INTO mitra_profiles 
-           (user_id, whatsapp_number, store_name, workshop_address, started_year, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)`, [
-                    newUserId,
-                    '-',
-                    'Toko ' + name,
-                    '-',
-                    new Date().getFullYear(),
-                    '',
-                    '',
-                    '[]'
-                ]);
+                if (targetRole === 'mitra') {
+                    await connection.query(`INSERT INTO mitra_profiles 
+             (user_id, whatsapp_number, store_name, workshop_address, started_year, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)`, [
+                        newUserId,
+                        '-',
+                        'Toko ' + name,
+                        '-',
+                        new Date().getFullYear(),
+                        '',
+                        '',
+                        '[]'
+                    ]);
+                }
                 await connection.commit();
                 user = {
                     id: newUserId,
                     name,
                     email,
-                    role: 'mitra',
-                    store_name: 'Toko ' + name,
-                    is_verified: 0,
+                    role: targetRole,
+                    store_name: targetRole === 'mitra' ? ('Toko ' + name) : undefined,
+                    is_verified: targetRole === 'mitra' ? 0 : 1,
                     avatar_url: avatarUrl
                 };
             }
@@ -497,7 +579,7 @@ const transporter = nodemailer_1.default.createTransport({
     },
 });
 // ============================================================
-// FORGOT PASSWORD — Kirim OTP ke email user
+// FORGOT PASSWORD Ã¢â‚¬â€ Kirim OTP ke email user
 // ============================================================
 const forgotPassword = async (req, res) => {
     console.log("=== API FORGOT PASSWORD DI-HIT ===", req.body);
@@ -543,14 +625,14 @@ const forgotPassword = async (req, res) => {
         if (process.env['EMAIL_USER'] && process.env['EMAIL_PASS'] && process.env['EMAIL_PASS'] !== 'xxxx xxxx xxxx xxxx') {
             try {
                 await transporter.sendMail(mailOptions);
-                console.log(`✅ [OTP] Email OTP berhasil dikirim ke ${email}`);
+                console.log(`Ã¢Å“â€¦ [OTP] Email OTP berhasil dikirim ke ${email}`);
             }
             catch (mailError) {
-                console.error('⚠️ [OTP] Gagal mengirim email via Nodemailer:', mailError);
+                console.error('Ã¢Å¡Â Ã¯Â¸Â [OTP] Gagal mengirim email via Nodemailer:', mailError);
             }
         }
         else {
-            console.log('⚠️ [OTP] EMAIL_USER/EMAIL_PASS belum dikonfigurasi. Gunakan kode OTP dari log terminal di atas.');
+            console.log('Ã¢Å¡Â Ã¯Â¸Â [OTP] EMAIL_USER/EMAIL_PASS belum dikonfigurasi. Gunakan kode OTP dari log terminal di atas.');
         }
         res.status(200).json({
             success: true,
@@ -566,7 +648,7 @@ const forgotPassword = async (req, res) => {
 };
 exports.forgotPassword = forgotPassword;
 // ============================================================
-// VERIFY OTP — Validasi kode OTP yang dimasukkan user
+// VERIFY OTP Ã¢â‚¬â€ Validasi kode OTP yang dimasukkan user
 // ============================================================
 const verifyOtp = async (req, res) => {
     try {
@@ -618,7 +700,7 @@ const verifyOtp = async (req, res) => {
 };
 exports.verifyOtp = verifyOtp;
 // ============================================================
-// RESET PASSWORD — Ubah kata sandi setelah OTP terverifikasi
+// RESET PASSWORD Ã¢â‚¬â€ Ubah kata sandi setelah OTP terverifikasi
 // ============================================================
 const resetPassword = async (req, res) => {
     try {

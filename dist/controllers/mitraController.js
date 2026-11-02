@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateProduct = exports.getOrders = exports.getFinanceReport = exports.getDashboardMitra = void 0;
+exports.getPublicMitraDetail = exports.getPublicMitraStores = exports.updateProduct = exports.getOrders = exports.getFinanceReport = exports.getDashboardMitra = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const getDashboardMitra = async (req, res) => {
     try {
@@ -289,4 +289,128 @@ const updateProduct = async (req, res) => {
     }
 };
 exports.updateProduct = updateProduct;
+const getPublicMitraStores = async (req, res) => {
+    try {
+        const { search } = req.query;
+        let query = `
+      SELECT 
+        m.id,
+        m.user_id,
+        m.store_name,
+        m.store_name AS name,
+        m.workshop_address,
+        m.workshop_address AS location,
+        m.whatsapp_number,
+        m.started_year,
+        m.description,
+        m.website,
+        m.instagram,
+        m.banner_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS image,
+        (SELECT COUNT(*) FROM products p WHERE p.mitra_id = m.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products
+      FROM mitra_profiles m
+      LEFT JOIN users u ON m.user_id = u.id
+      WHERE (m.is_active = 1 OR m.is_active IS NULL)
+    `;
+        const params = [];
+        if (search) {
+            query += ' AND (m.store_name LIKE ? OR m.description LIKE ?)';
+            params.push(`%${search}%`, `%${search}%`);
+        }
+        query += ' ORDER BY m.id DESC';
+        const [rows] = await database_js_1.default.query(query, params);
+        const stores = rows.map((r) => ({
+            ...r,
+            rating: 4.9,
+        }));
+        res.status(200).json({
+            success: true,
+            message: 'Daftar toko mitra berhasil diambil',
+            data: stores,
+            meta: { timestamp: new Date().toISOString() }
+        });
+    }
+    catch (error) {
+        console.error('Error getPublicMitraStores:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengambil daftar toko' });
+    }
+};
+exports.getPublicMitraStores = getPublicMitraStores;
+const getPublicMitraDetail = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [stores] = await database_js_1.default.query(`SELECT 
+        m.id,
+        m.user_id,
+        m.store_name,
+        m.store_name AS name,
+        m.workshop_address,
+        m.workshop_address AS location,
+        m.whatsapp_number,
+        m.started_year,
+        m.description,
+        m.website,
+        m.instagram,
+        m.banner_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS image
+      FROM mitra_profiles m
+      LEFT JOIN users u ON m.user_id = u.id
+      WHERE m.id = ?
+      LIMIT 1`, [id]);
+        if (!stores || stores.length === 0) {
+            res.status(404).json({ success: false, message: 'Toko mitra tidak ditemukan' });
+            return;
+        }
+        const store = { ...stores[0], rating: 4.9 };
+        const [products] = await database_js_1.default.query(`SELECT 
+        p.id,
+        p.name,
+        p.description,
+        p.price,
+        p.stock,
+        p.image_urls,
+        c.name AS category
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.mitra_id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
+      ORDER BY p.created_at DESC`, [id]);
+        const formattedProducts = products.map((p) => {
+            let img = '';
+            if (p.image_urls) {
+                try {
+                    const parsed = typeof p.image_urls === 'string' ? JSON.parse(p.image_urls) : p.image_urls;
+                    img = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : '';
+                }
+                catch {
+                    img = String(p.image_urls);
+                }
+            }
+            return {
+                id: String(p.id),
+                name: p.name,
+                price: Number(p.price),
+                stock: Number(p.stock),
+                category: p.category || 'Keramik',
+                image: img,
+                image_url: img,
+            };
+        });
+        res.status(200).json({
+            success: true,
+            message: 'Detail toko mitra berhasil diambil',
+            data: {
+                ...store,
+                products: formattedProducts,
+            },
+            meta: { timestamp: new Date().toISOString() }
+        });
+    }
+    catch (error) {
+        console.error('Error getPublicMitraDetail:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengambil detail toko' });
+    }
+};
+exports.getPublicMitraDetail = getPublicMitraDetail;
 //# sourceMappingURL=mitraController.js.map

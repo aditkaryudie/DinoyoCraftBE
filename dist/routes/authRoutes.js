@@ -1,19 +1,25 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
-const authController_1 = require("../controllers/authController");
-const uploadMiddleware_1 = require("../middlewares/uploadMiddleware");
-const authMiddleware_1 = require("../middlewares/authMiddleware");
+const authController_js_1 = require("../controllers/authController.js");
+const uploadMiddleware_js_1 = require("../middlewares/uploadMiddleware.js");
+const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const router = (0, express_1.Router)();
-router.post('/register-mitra', uploadMiddleware_1.uploadMitraDocs, authController_1.registerMitra);
-router.post('/login', authController_1.loginMitra);
-router.post('/login-mitra', authController_1.loginMitra);
-router.post('/google-login', authController_1.googleLogin);
-router.post('/forgot-password', authController_1.forgotPassword);
-router.post('/verify-otp', authController_1.verifyOtp);
-router.post('/reset-password', authController_1.resetPassword);
-router.get('/profile', authMiddleware_1.verifyToken, authController_1.getProfile);
-router.put('/profile', authMiddleware_1.verifyToken, uploadMiddleware_1.uploadProfileImages, authController_1.updateProfile);
-router.post('/reupload-docs', authMiddleware_1.verifyToken, uploadMiddleware_1.uploadMitraDocs, authController_1.reuploadDocs);
+// Registrasi & Login
+router.post('/register-customer', authController_js_1.registerCustomer);
+router.post('/register-mitra', uploadMiddleware_js_1.uploadMitraDocs, authController_js_1.registerMitra);
+router.post('/login', authController_js_1.loginMitra);
+router.post('/login-mitra', authController_js_1.loginMitra);
+router.post('/google-login', authController_js_1.googleLogin);
+// Lupa Password & OTP
+router.post('/forgot-password', authController_js_1.forgotPassword);
+router.post('/verify-otp', authController_js_1.verifyOtp);
+router.post('/reset-password', authController_js_1.resetPassword);
+// Profil
+router.get('/profile', authMiddleware_js_1.verifyToken, authController_js_1.getProfile);
+router.put('/profile', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.uploadProfileImages, authController_js_1.updateProfile);
+router.post('/reupload-docs', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.uploadMitraDocs, authController_js_1.reuploadDocs);
+// FCM Device Token
+router.post('/fcm-token', authMiddleware_js_1.verifyToken, authController_js_1.saveFcmToken);
 exports.default = router;
 //# sourceMappingURL=authRoutes.js.map

@@ -39,6 +39,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const adminController = __importStar(require("../controllers/adminController.js"));
+const aiSettingController_js_1 = require("../controllers/aiSettingController.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js");
 const router = (0, express_1.Router)();
@@ -48,6 +49,18 @@ const router = (0, express_1.Router)();
  * @access  Admin (atau public untuk dev/test)
  */
 router.get('/dashboard-stats', adminController.getDashboardStats);
+/**
+ * @route   GET /api/admin/ai-settings
+ * @desc    Mendapatkan konfigurasi AI Assistant
+ * @access  Admin
+ */
+router.get('/ai-settings', aiSettingController_js_1.getAiSettings);
+/**
+ * @route   PUT /api/admin/ai-settings
+ * @desc    Menyimpan / memperbarui konfigurasi AI Assistant
+ * @access  Admin
+ */
+router.put('/ai-settings', aiSettingController_js_1.updateAiSettings);
 // Semua route di bawah ini memerlukan autentikasi + role admin
 router.use(authMiddleware_js_1.verifyToken, (0, authMiddleware_js_1.requireRole)(['admin']));
 /**

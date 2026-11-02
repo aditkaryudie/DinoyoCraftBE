@@ -1,0 +1,1 @@
+{"version":3,"file":"AiSetting.d.ts","sourceRoot":"","sources":["../../src/models/AiSetting.ts"],"names":[],"mappings":"AAAA,OAAO,EAAa,KAAK,EAAE,MAAM,WAAW,CAAC;AAG7C,cAAM,SAAU,SAAQ,KAAK;IACnB,EAAE,EAAE,MAAM,CAAC;IACX,oBAAoB,EAAE,OAAO,CAAC;IAC9B,UAAU,EAAE,MAAM,CAAC;IACnB,OAAO,EAAE,MAAM,CAAC;IAChB,aAAa,EAAE,MAAM,CAAC;CAC/B;eAcc,SAAS"}

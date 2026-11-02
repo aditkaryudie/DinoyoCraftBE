@@ -228,6 +228,48 @@ const migrations = [
     \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    `CREATE TABLE IF NOT EXISTS \`user_device_tokens\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`fcm_token\` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`platform\` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'android',
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    UNIQUE KEY \`uq_user_device_token\` (\`user_id\`, \`fcm_token\`),
+    KEY \`idx_tokens_user\` (\`user_id\`),
+    CONSTRAINT \`fk_tokens_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    `CREATE TABLE IF NOT EXISTS \`reviews\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`product_id\` int UNSIGNED NOT NULL,
+    \`order_id\` int UNSIGNED DEFAULT NULL,
+    \`rating\` tinyint UNSIGNED NOT NULL DEFAULT '5',
+    \`comment\` text COLLATE utf8mb4_unicode_ci,
+    \`variant\` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`photo_urls\` json DEFAULT NULL,
+    \`helpful_count\` int UNSIGNED NOT NULL DEFAULT '0',
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_reviews_product\` (\`product_id\`),
+    KEY \`idx_reviews_user\` (\`user_id\`),
+    CONSTRAINT \`fk_reviews_product\` FOREIGN KEY (\`product_id\`) REFERENCES \`products\` (\`id\`) ON DELETE CASCADE,
+    CONSTRAINT \`fk_reviews_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    `CREATE TABLE IF NOT EXISTS \`notifications\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`title\` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`body\` text COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`type\` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'general',
+    \`data\` json DEFAULT NULL,
+    \`is_read\` tinyint(1) NOT NULL DEFAULT '0',
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_notifications_user\` (\`user_id\`),
+    CONSTRAINT \`fk_notifications_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
     // ==========================================
     // 3. SEEDING / INSERT DATA (DENGAN IGNORE AGAR AMAN JIKA DI-RUN ULANG)
     // ==========================================

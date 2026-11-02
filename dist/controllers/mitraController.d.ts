@@ -3,4 +3,6 @@ export declare const getDashboardMitra: (req: Request, res: Response) => Promise
 export declare const getFinanceReport: (req: Request, res: Response) => Promise<void>;
 export declare const getOrders: (req: Request, res: Response) => Promise<void>;
 export declare const updateProduct: (req: Request, res: Response) => Promise<void>;
+export declare const getPublicMitraStores: (req: Request, res: Response) => Promise<void>;
+export declare const getPublicMitraDetail: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=mitraController.d.ts.map

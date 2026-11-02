@@ -8,11 +8,14 @@ const mitraController_js_1 = require("../controllers/mitraController.js");
 const storeController_js_1 = require("../controllers/storeController.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const router = express_1.default.Router();
+// Route Publik Profil Toko Mitra untuk Konsumsi Mobile & Tamu
+router.get('/public', mitraController_js_1.getPublicMitraStores);
+router.get('/:id/public', mitraController_js_1.getPublicMitraDetail);
 // Route terlindungi oleh middleware verifyToken
 router.get('/dashboard', authMiddleware_js_1.verifyToken, mitraController_js_1.getDashboardMitra);
 // Route untuk halaman Toko Saya
 router.get('/store-profile', authMiddleware_js_1.verifyToken, storeController_js_1.getStoreProfile);
-// 3 Endpoint Baru Mitra
+// Endpoint Manajemen Mitra
 router.get('/finance', authMiddleware_js_1.verifyToken, mitraController_js_1.getFinanceReport);
 router.get('/orders', authMiddleware_js_1.verifyToken, mitraController_js_1.getOrders);
 router.put('/products/:id', authMiddleware_js_1.verifyToken, mitraController_js_1.updateProduct);
