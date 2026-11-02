@@ -186,3 +186,7 @@ export const setDefaultAddress = async (req: Request, res: Response): Promise<vo
     connection.release();
   }
 };
+
+
+// Aliases
+export const getAddresses = getUserAddresses;

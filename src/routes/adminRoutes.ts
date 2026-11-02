@@ -5,6 +5,7 @@
 
 import { Router } from 'express';
 import * as adminController from '../controllers/adminController.js';
+import { getAiSettings, updateAiSettings } from '../controllers/aiSettingController.js';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
 import { validateZod } from '../middlewares/validatorMiddleware.js';
 import {
@@ -21,6 +22,20 @@ const router = Router();
  * @access  Admin (atau public untuk dev/test)
  */
 router.get('/dashboard-stats', adminController.getDashboardStats);
+
+/**
+ * @route   GET /api/admin/ai-settings
+ * @desc    Mendapatkan konfigurasi AI Assistant
+ * @access  Admin
+ */
+router.get('/ai-settings', getAiSettings);
+
+/**
+ * @route   PUT /api/admin/ai-settings
+ * @desc    Menyimpan / memperbarui konfigurasi AI Assistant
+ * @access  Admin
+ */
+router.put('/ai-settings', updateAiSettings);
 
 // Semua route di bawah ini memerlukan autentikasi + role admin
 router.use(verifyToken, requireRole(['admin']));

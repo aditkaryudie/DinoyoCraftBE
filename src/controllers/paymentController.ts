@@ -449,3 +449,9 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+
+
+// Aliases agar kompatibel dengan pemanggilan fungsi versi alternatif
+export const getPaymentMethods = getMethods;
+export const createPayment = createOrderPayment;
+export const getPaymentStatus = checkOrderStatus;

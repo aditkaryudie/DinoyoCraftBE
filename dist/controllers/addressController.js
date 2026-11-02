@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.setDefaultAddress = exports.deleteAddress = exports.updateAddress = exports.createAddress = exports.getAddressById = exports.getUserAddresses = void 0;
+exports.getAddresses = exports.setDefaultAddress = exports.deleteAddress = exports.updateAddress = exports.createAddress = exports.getAddressById = exports.getUserAddresses = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
 const getUserAddresses = async (_req, res) => {
@@ -156,4 +156,6 @@ const setDefaultAddress = async (req, res) => {
     }
 };
 exports.setDefaultAddress = setDefaultAddress;
+// Aliases
+exports.getAddresses = exports.getUserAddresses;
 //# sourceMappingURL=addressController.js.map

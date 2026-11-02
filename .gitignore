@@ -21,3 +21,4 @@ scbz/*.db
 # Firebase Service Account
 *service-account*.json
 *firebase-adminsdk*.json
+*firebase-service-account*.json

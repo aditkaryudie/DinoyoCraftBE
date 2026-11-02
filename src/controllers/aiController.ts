@@ -5,7 +5,7 @@
 // ============================================================
 
 import { Request, Response } from 'express';
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import pool from '../config/database.js';
 import { sendSuccess, sendError, sendBadRequest } from '../utils/response.js';
 import {
@@ -13,47 +13,30 @@ import {
   anonymizeObject,
   detectSuspiciousInput,
 } from '../utils/piiAnonymizer.js';
-import { AiAnalysisDto, CountResult } from '../types/index.js';
 import { getAuthLocals } from '../middlewares/authMiddleware.js';
 
 // -------------------------------------------------------
 // Inisialisasi Gemini Client
 // -------------------------------------------------------
-const GEMINI_API_KEY = process.env['GEMINI_API_KEY'];
+const GEMINI_API_KEY = process.env['GEMINI_API_KEY'] || '';
 const GEMINI_MODEL_NAME = process.env['GEMINI_MODEL'] ?? 'gemini-1.5-flash';
 
-if (!GEMINI_API_KEY) {
-  throw new Error('❌ GEMINI_API_KEY tidak ditemukan di environment variables!');
-}
-
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model: GenerativeModel = genAI.getGenerativeModel({
-  model: GEMINI_MODEL_NAME,
-  generationConfig: {
-    temperature: 0.4,
-    topP: 0.8,
-    topK: 40,
-    maxOutputTokens: 2048,
-    responseMimeType: 'application/json',
-  },
-});
-
-// -------------------------------------------------------
-// Tipe untuk hasil analisis AI
-// -------------------------------------------------------
-interface AiAnalysisResult {
-  rekomendasi_produk: string[];
-  analisis_pasar: string;
-  strategi_pemasaran: string[];
-  estimasi_harga: {
-    min: number;
-    max: number;
-    satuan: string;
-  };
-  potensi_risiko: string[];
-  kesimpulan: string;
-  confidence_score: number;
-}
+const getModel = () => {
+  if (!GEMINI_API_KEY) {
+    throw new Error('❌ GEMINI_API_KEY tidak ditemukan di environment variables!');
+  }
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  return genAI.getGenerativeModel({
+    model: GEMINI_MODEL_NAME,
+    generationConfig: {
+      temperature: 0.4,
+      topP: 0.8,
+      topK: 40,
+      maxOutputTokens: 2048,
+      responseMimeType: 'application/json',
+    },
+  });
+};
 
 // -------------------------------------------------------
 // Prompt Engineering dengan Strict JSON Schema
@@ -104,12 +87,8 @@ FORMAT OUTPUT JSON WAJIB (jangan tambah field lain):
 // -------------------------------------------------------
 // Controller: POST /api/ai/analyze
 // -------------------------------------------------------
-export const analyzeWithAI = async (
-  _req: Request,
-  res: Response
-): Promise<void> => {
+export const analyzeWithAI = async (_req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
-
   try {
     const { userId } = getAuthLocals(res);
     const {
@@ -117,7 +96,7 @@ export const analyzeWithAI = async (
       productCategory = 'Umum',
       targetMarket = 'Pasar Lokal',
       additionalNotes = '-',
-    } = _req.body as AiAnalysisDto;
+    } = _req.body;
 
     // 1. Deteksi input mencurigakan
     if (detectSuspiciousInput(context)) {
@@ -133,21 +112,17 @@ export const analyzeWithAI = async (
     const safeNotes = anonymizePII(additionalNotes);
 
     // 3. Bangun prompt dengan data yang sudah dibersihkan
-    const prompt = buildAnalysisPrompt(
-      safeContext,
-      safeCategory,
-      safeMarket,
-      safeNotes
-    );
+    const prompt = buildAnalysisPrompt(safeContext, safeCategory, safeMarket, safeNotes);
 
     // 4. Kirim ke Gemini API
+    const model = getModel();
     const geminiResponse = await model.generateContent(prompt);
     const rawText = geminiResponse.response.text();
 
     // 5. Parse JSON dari response Gemini
-    let parsedResult: AiAnalysisResult;
+    let parsedResult;
     try {
-      parsedResult = JSON.parse(rawText) as AiAnalysisResult;
+      parsedResult = JSON.parse(rawText);
     } catch {
       console.error('❌ Gemini returned non-JSON response:', rawText);
       sendError(res, 'AI mengembalikan format respons yang tidak valid. Coba lagi.', 502);
@@ -155,10 +130,7 @@ export const analyzeWithAI = async (
     }
 
     // 6. Anonimisasi hasil AI (jaga-jaga jika AI bocorkan data)
-    const sanitizedResult = anonymizeObject(
-      parsedResult as unknown as Record<string, unknown>
-    ) as unknown as AiAnalysisResult;
-
+    const sanitizedResult = anonymizeObject(parsedResult);
     const processingTimeMs = Date.now() - startTime;
 
     // 7. Simpan hasil analisis ke database
@@ -195,7 +167,7 @@ export const analyzeWithAI = async (
       },
       'Analisis AI berhasil diselesaikan.'
     );
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('❌ AI Analysis Error:', err);
     sendError(res, 'Gagal menjalankan analisis AI.', 500, String(err));
   }
@@ -204,10 +176,7 @@ export const analyzeWithAI = async (
 // -------------------------------------------------------
 // Controller: GET /api/ai/history
 // -------------------------------------------------------
-export const getAiHistory = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const getAiHistory = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = getAuthLocals(res);
     const page = Math.max(1, parseInt(req.query['page'] as string) || 1);
@@ -223,11 +192,10 @@ export const getAiHistory = async (
       [userId, limit, offset]
     );
 
-    const [countRows] = await pool.execute<CountResult[]>(
+    const [countRows]: any = await pool.execute(
       'SELECT COUNT(*) as total FROM ai_analysis_results WHERE user_id = ?',
       [userId]
     );
-
     const total = countRows[0]?.total ?? 0;
 
     sendSuccess(res, rows, 'Riwayat analisis berhasil diambil.', 200, {
@@ -236,7 +204,8 @@ export const getAiHistory = async (
       total,
       totalPages: Math.ceil(total / limit),
     });
-  } catch (err) {
+  } catch (err: unknown) {
     sendError(res, 'Gagal mengambil riwayat analisis.', 500, String(err));
   }
 };
+

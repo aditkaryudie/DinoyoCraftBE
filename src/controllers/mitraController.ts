@@ -363,3 +363,137 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+
+export const getPublicMitraStores = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { search } = req.query;
+    let query = `
+      SELECT 
+        m.id,
+        m.user_id,
+        m.store_name,
+        m.store_name AS name,
+        m.workshop_address,
+        m.workshop_address AS location,
+        m.whatsapp_number,
+        m.started_year,
+        m.description,
+        m.website,
+        m.instagram,
+        m.banner_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS image,
+        (SELECT COUNT(*) FROM products p WHERE p.mitra_id = m.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products
+      FROM mitra_profiles m
+      LEFT JOIN users u ON m.user_id = u.id
+      WHERE (m.is_active = 1 OR m.is_active IS NULL)
+    `;
+    const params: any[] = [];
+    if (search) {
+      query += ' AND (m.store_name LIKE ? OR m.description LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    query += ' ORDER BY m.id DESC';
+
+    const [rows]: any = await pool.query(query, params);
+    const stores = rows.map((r: any) => ({
+      ...r,
+      rating: 4.9,
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: 'Daftar toko mitra berhasil diambil',
+      data: stores,
+      meta: { timestamp: new Date().toISOString() }
+    });
+  } catch (error) {
+    console.error('Error getPublicMitraStores:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengambil daftar toko' });
+  }
+};
+
+export const getPublicMitraDetail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const [stores]: any = await pool.query(
+      `SELECT 
+        m.id,
+        m.user_id,
+        m.store_name,
+        m.store_name AS name,
+        m.workshop_address,
+        m.workshop_address AS location,
+        m.whatsapp_number,
+        m.started_year,
+        m.description,
+        m.website,
+        m.instagram,
+        m.banner_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS image
+      FROM mitra_profiles m
+      LEFT JOIN users u ON m.user_id = u.id
+      WHERE m.id = ?
+      LIMIT 1`,
+      [id]
+    );
+
+    if (!stores || stores.length === 0) {
+      res.status(404).json({ success: false, message: 'Toko mitra tidak ditemukan' });
+      return;
+    }
+
+    const store = { ...stores[0], rating: 4.9 };
+
+    const [products]: any = await pool.query(
+      `SELECT 
+        p.id,
+        p.name,
+        p.description,
+        p.price,
+        p.stock,
+        p.image_urls,
+        c.name AS category
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.mitra_id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
+      ORDER BY p.created_at DESC`,
+      [id]
+    );
+
+    const formattedProducts = products.map((p: any) => {
+      let img = '';
+      if (p.image_urls) {
+        try {
+          const parsed = typeof p.image_urls === 'string' ? JSON.parse(p.image_urls) : p.image_urls;
+          img = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : '';
+        } catch {
+          img = String(p.image_urls);
+        }
+      }
+      return {
+        id: String(p.id),
+        name: p.name,
+        price: Number(p.price),
+        stock: Number(p.stock),
+        category: p.category || 'Keramik',
+        image: img,
+        image_url: img,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Detail toko mitra berhasil diambil',
+      data: {
+        ...store,
+        products: formattedProducts,
+      },
+      meta: { timestamp: new Date().toISOString() }
+    });
+  } catch (error) {
+    console.error('Error getPublicMitraDetail:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengambil detail toko' });
+  }
+};

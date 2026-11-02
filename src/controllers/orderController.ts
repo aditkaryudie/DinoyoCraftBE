@@ -460,3 +460,9 @@ export const updateOrderStatus = async (req: Request, res: Response): Promise<vo
   }
 };
 
+
+
+// Aliases
+export const checkoutOrder = checkout;
+export const getOrders = getUserOrders;
+export const getOrderDetail = getOrderById;

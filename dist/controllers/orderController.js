@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateOrderStatus = exports.getMitraOrders = exports.getOrderById = exports.getUserOrders = exports.checkout = void 0;
+exports.getOrderDetail = exports.getOrders = exports.checkoutOrder = exports.updateOrderStatus = exports.getMitraOrders = exports.getOrderById = exports.getUserOrders = exports.checkout = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
 const checkout = async (req, res) => {
@@ -367,4 +367,8 @@ const updateOrderStatus = async (req, res) => {
     }
 };
 exports.updateOrderStatus = updateOrderStatus;
+// Aliases
+exports.checkoutOrder = exports.checkout;
+exports.getOrders = exports.getUserOrders;
+exports.getOrderDetail = exports.getOrderById;
 //# sourceMappingURL=orderController.js.map

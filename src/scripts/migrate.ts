@@ -299,11 +299,58 @@ const tables = [
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`),
     FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE ON UPDATE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // 19. user_device_tokens
+  `CREATE TABLE IF NOT EXISTS \`user_device_tokens\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`fcm_token\` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`platform\` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'android',
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    UNIQUE KEY \`uq_user_device_token\` (\`user_id\`, \`fcm_token\`),
+    KEY \`idx_tokens_user\` (\`user_id\`),
+    CONSTRAINT \`fk_tokens_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // 20. reviews
+  `CREATE TABLE IF NOT EXISTS \`reviews\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`product_id\` int UNSIGNED NOT NULL,
+    \`order_id\` int UNSIGNED DEFAULT NULL,
+    \`rating\` tinyint UNSIGNED NOT NULL DEFAULT '5',
+    \`comment\` text COLLATE utf8mb4_unicode_ci,
+    \`variant\` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`photo_urls\` json DEFAULT NULL,
+    \`helpful_count\` int UNSIGNED NOT NULL DEFAULT '0',
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_reviews_product\` (\`product_id\`),
+    KEY \`idx_reviews_user\` (\`user_id\`),
+    CONSTRAINT \`fk_reviews_product\` FOREIGN KEY (\`product_id\`) REFERENCES \`products\` (\`id\`) ON DELETE CASCADE,
+    CONSTRAINT \`fk_reviews_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // 21. notifications
+  `CREATE TABLE IF NOT EXISTS \`notifications\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`title\` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`body\` text COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`type\` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'general',
+    \`data\` json DEFAULT NULL,
+    \`is_read\` tinyint(1) NOT NULL DEFAULT '0',
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_notifications_user\` (\`user_id\`),
+    CONSTRAINT \`fk_notifications_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
 ];
 
 const seeds = [
-  // Super Admin & Sample Users
   `INSERT IGNORE INTO \`users\` (\`id\`, \`name\`, \`email\`, \`password_hash\`, \`role\`, \`is_active\`, \`token_version\`, \`google_id\`, \`avatar_url\`, \`created_at\`, \`updated_at\`) VALUES
   (1, 'Super Admin', 'csdinoyocraft@gmail.com', '$2b$10$wfcDxLuZWPYzSA5UeXj6HO2XU1xjLfaYD.fcGmH7I6fCsg8CZec2K', 'admin', 1, 0, NULL, NULL, '2026-10-10 23:32:11', '2026-10-11 18:54:07'),
   (34, 'Aditya Karyudie', 'aditkaryudie@gmail.com', NULL, 'admin', 1, 0, '117542459585763900953', 'https://lh3.googleusercontent.com/a/ACg8ocIAzCOQLXeIHKft2sNVvFmwz_YaS9Km1KUc9ETkS2heMDRDPgFZ=s96-c', '2026-10-16 16:59:37', '2026-10-17 11:59:42'),

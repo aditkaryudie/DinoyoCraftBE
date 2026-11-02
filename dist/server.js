@@ -9,13 +9,27 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const app_js_1 = __importDefault(require("./app.js"));
 const database_js_1 = require("./config/database.js");
+const AiSetting_js_1 = __importDefault(require("./models/AiSetting.js"));
 const PORT = process.env.PORT || 5000;
 const startServer = async () => {
     // Tes koneksi database sebelum server mulai menerima request
     await (0, database_js_1.testConnection)();
-    app_js_1.default.listen(PORT, () => {
+    // Pastikan tabel ai_settings tersinkronisasi dan memiliki default row (ID = 1)
+    await AiSetting_js_1.default.sync();
+    await AiSetting_js_1.default.findOrCreate({
+        where: { id: 1 },
+        defaults: {
+            is_auto_reply_active: false,
+            model_name: 'gemini-1.5-pro',
+            api_key: '',
+            system_prompt: 'Anda adalah Asisten Virtual resmi dari Kampung Keramik Dinoyo. Tugas Anda adalah melayani pelanggan, memberikan info seputar harga dan jadwal bengkel, serta membantu proses pemesanan dengan ramah dan sopan.',
+        },
+    });
+    console.log('✅ AI Settings table synced and ready.');
+    app_js_1.default.listen(Number(PORT), '0.0.0.0', () => {
         console.log('='.repeat(50));
         console.log(`🚀 DinoyoCraft API Server running`);
+        console.log(`   Host     : 0.0.0.0 (Accessible from Mobile & Local Network)`);
         console.log(`   Port     : ${PORT}`);
         console.log(`   Env      : ${process.env['NODE_ENV'] ?? 'development'}`);
         console.log(`   Base URL : http://localhost:${PORT}/api`);

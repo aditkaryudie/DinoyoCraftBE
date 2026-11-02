@@ -9,6 +9,8 @@ import {
   handleReportAction,
   getDeletionRequests,
   handleDeletionAction,
+  submitReport,
+  submitAccountDeletion
 } from '../controllers/moderationController.js';
 import { verifyToken, isAdmin } from '../middlewares/authMiddleware.js';
 import { validateZod } from '../middlewares/validatorMiddleware.js';
@@ -16,15 +18,16 @@ import { handleReportActionSchema, handleDeletionActionSchema } from '../validat
 
 const router = express.Router();
 
-// Middleware: Hanya admin yang bisa mengakses rute ini
-router.use(verifyToken, isAdmin);
+// Submission Endpoints (Dapat diakses pengguna / mobile)
+router.post('/report', submitReport);
+router.post('/account-deletion', submitAccountDeletion);
 
-// Tab 1: Laporan Pelanggaran
-router.get('/reports', getReports);
-router.put('/reports/:id/action', validateZod(handleReportActionSchema), handleReportAction);
+// Tab 1: Laporan Pelanggaran (Admin Only)
+router.get('/reports', verifyToken, isAdmin, getReports);
+router.put('/reports/:id/action', verifyToken, isAdmin, validateZod(handleReportActionSchema), handleReportAction);
 
-// Tab 2: Pengajuan Hapus Akun
-router.get('/account-deletions', getDeletionRequests);
-router.put('/account-deletions/:id/action', validateZod(handleDeletionActionSchema), handleDeletionAction);
+// Tab 2: Pengajuan Hapus Akun (Admin Only)
+router.get('/account-deletions', verifyToken, isAdmin, getDeletionRequests);
+router.put('/account-deletions/:id/action', verifyToken, isAdmin, validateZod(handleDeletionActionSchema), handleDeletionAction);
 
 export default router;

@@ -7,6 +7,7 @@ exports.getChatContacts = exports.getChatHistory = exports.getMessages = exports
 const pusher_1 = __importDefault(require("pusher"));
 const database_js_1 = __importDefault(require("../config/database.js"));
 const encryption_js_1 = require("../utils/encryption.js");
+const notificationService_js_1 = require("../services/notificationService.js");
 // Inisialisasi Pusher Server SDK
 const pusher = new pusher_1.default({
     appId: (process.env.PUSHER_APP_ID || '').trim(),
@@ -65,6 +66,15 @@ const sendMessage = async (req, res) => {
         }
         catch (pusherError) {
             console.error('⚠️ Pusher trigger error:', pusherError);
+        }
+        // Trigger FCM Push Notification ke penerima chat
+        try {
+            const [senderRows] = await database_js_1.default.query('SELECT name FROM users WHERE id = ? LIMIT 1', [numericSenderId]);
+            const senderName = senderRows?.[0]?.name || 'Seseorang';
+            (0, notificationService_js_1.sendPushNotificationToUser)(numericTargetId, `Pesan Baru dari ${senderName} 💬`, message.trim(), { type: 'chat', sender_id: String(numericSenderId), store_name: senderName }).catch((err) => console.warn('[FCM] Push notification error:', err));
+        }
+        catch (fcmErr) {
+            console.warn('⚠️ Gagal trigger push notification chat:', fcmErr);
         }
         res.status(201).json({
             success: true,

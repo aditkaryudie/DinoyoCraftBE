@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import Pusher from 'pusher';
 import pool from '../config/database.js';
 import { encryptMessage, decryptMessage } from '../utils/encryption.js';
+import { sendPushNotificationToUser } from '../services/notificationService.js';
 
 // Inisialisasi Pusher Server SDK
 const pusher = new Pusher({
@@ -77,6 +78,20 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
       console.log(`[Pusher Backend] Event 'new-message' berhasil dikirim ke Pusher`);
     } catch (pusherError) {
       console.error('⚠️ Pusher trigger error:', pusherError);
+    }
+
+    // Trigger FCM Push Notification ke penerima chat
+    try {
+      const [senderRows]: any = await pool.query('SELECT name FROM users WHERE id = ? LIMIT 1', [numericSenderId]);
+      const senderName = senderRows?.[0]?.name || 'Seseorang';
+      sendPushNotificationToUser(
+        numericTargetId,
+        `Pesan Baru dari ${senderName} 💬`,
+        message.trim(),
+        { type: 'chat', sender_id: String(numericSenderId), store_name: senderName }
+      ).catch((err) => console.warn('[FCM] Push notification error:', err));
+    } catch (fcmErr) {
+      console.warn('⚠️ Gagal trigger push notification chat:', fcmErr);
     }
 
     res.status(201).json({

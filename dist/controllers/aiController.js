@@ -17,22 +17,24 @@ const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 // -------------------------------------------------------
 // Inisialisasi Gemini Client
 // -------------------------------------------------------
-const GEMINI_API_KEY = process.env['GEMINI_API_KEY'];
+const GEMINI_API_KEY = process.env['GEMINI_API_KEY'] || '';
 const GEMINI_MODEL_NAME = process.env['GEMINI_MODEL'] ?? 'gemini-1.5-flash';
-if (!GEMINI_API_KEY) {
-    throw new Error('❌ GEMINI_API_KEY tidak ditemukan di environment variables!');
-}
-const genAI = new generative_ai_1.GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({
-    model: GEMINI_MODEL_NAME,
-    generationConfig: {
-        temperature: 0.4,
-        topP: 0.8,
-        topK: 40,
-        maxOutputTokens: 2048,
-        responseMimeType: 'application/json',
-    },
-});
+const getModel = () => {
+    if (!GEMINI_API_KEY) {
+        throw new Error('❌ GEMINI_API_KEY tidak ditemukan di environment variables!');
+    }
+    const genAI = new generative_ai_1.GoogleGenerativeAI(GEMINI_API_KEY);
+    return genAI.getGenerativeModel({
+        model: GEMINI_MODEL_NAME,
+        generationConfig: {
+            temperature: 0.4,
+            topP: 0.8,
+            topK: 40,
+            maxOutputTokens: 2048,
+            responseMimeType: 'application/json',
+        },
+    });
+};
 // -------------------------------------------------------
 // Prompt Engineering dengan Strict JSON Schema
 // -------------------------------------------------------
@@ -95,6 +97,7 @@ const analyzeWithAI = async (_req, res) => {
         // 3. Bangun prompt dengan data yang sudah dibersihkan
         const prompt = buildAnalysisPrompt(safeContext, safeCategory, safeMarket, safeNotes);
         // 4. Kirim ke Gemini API
+        const model = getModel();
         const geminiResponse = await model.generateContent(prompt);
         const rawText = geminiResponse.response.text();
         // 5. Parse JSON dari response Gemini

@@ -19,4 +19,6 @@ export declare const getDeletionRequests: (req: Request, res: Response) => Promi
  * Setujui atau tolak pengajuan penghapusan akun
  */
 export declare const handleDeletionAction: (req: Request, res: Response) => Promise<void>;
+export declare const submitReport: (req: Request, res: Response) => Promise<void>;
+export declare const submitAccountDeletion: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=moderationController.d.ts.map

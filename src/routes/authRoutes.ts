@@ -5,6 +5,7 @@
 
 import { Router } from 'express';
 import {
+  registerCustomer,
   registerMitra,
   loginMitra,
   googleLogin,
@@ -14,6 +15,7 @@ import {
   verifyOtp,
   resetPassword,
   reuploadDocs,
+  saveFcmToken,
 } from '../controllers/authController.js';
 import { uploadMitraDocs, uploadProfileImages } from '../middlewares/uploadMiddleware.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
@@ -31,6 +33,7 @@ import {
 const router = Router();
 
 // Registrasi & Login
+router.post('/register-customer', registerCustomer);
 router.post('/register-mitra', uploadMitraDocs, validateZod(registerMitraSchema), registerMitra);
 router.post('/login', validateZod(loginSchema), loginMitra);
 router.post('/login-mitra', validateZod(loginSchema), loginMitra);
@@ -45,5 +48,8 @@ router.post('/reset-password', validateZod(resetPasswordSchema), resetPassword);
 router.get('/profile', verifyToken, getProfile);
 router.put('/profile', verifyToken, uploadProfileImages, validateZod(updateProfileSchema), updateProfile);
 router.post('/reupload-docs', verifyToken, uploadMitraDocs, reuploadDocs);
+
+// FCM Device Token
+router.post('/fcm-token', verifyToken, saveFcmToken);
 
 export default router;

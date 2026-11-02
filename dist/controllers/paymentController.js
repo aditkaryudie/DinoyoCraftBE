@@ -40,7 +40,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleWebhook = exports.checkOrderStatus = exports.createOrderPayment = exports.getMethods = exports.getFees = exports.getCountries = void 0;
+exports.getPaymentStatus = exports.createPayment = exports.getPaymentMethods = exports.handleWebhook = exports.checkOrderStatus = exports.createOrderPayment = exports.getMethods = exports.getFees = exports.getCountries = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
@@ -406,4 +406,8 @@ const handleWebhook = async (req, res) => {
     }
 };
 exports.handleWebhook = handleWebhook;
+// Aliases agar kompatibel dengan pemanggilan fungsi versi alternatif
+exports.getPaymentMethods = exports.getMethods;
+exports.createPayment = exports.createOrderPayment;
+exports.getPaymentStatus = exports.checkOrderStatus;
 //# sourceMappingURL=paymentController.js.map

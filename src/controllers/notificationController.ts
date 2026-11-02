@@ -38,6 +38,20 @@ export const getUserNotifications = async (_req: Request, res: Response): Promis
   }
 };
 
+export const getUnreadNotificationCount = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    const [unreadRows]: any = await pool.query(
+      'SELECT COUNT(*) as unread_count FROM notifications WHERE user_id = ? AND is_read = 0',
+      [userId]
+    );
+    sendSuccess(res, { unread_count: unreadRows[0]?.unread_count || 0 }, 'Jumlah notifikasi belum dibaca.');
+  } catch (error) {
+    console.error('❌ [getUnreadNotificationCount] Error:', error);
+    sendError(res, 'Gagal mengambil jumlah notifikasi.');
+  }
+};
+
 export const markAsRead = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = res.locals['userId'];
@@ -92,3 +106,7 @@ export const deleteNotification = async (req: Request, res: Response): Promise<v
     sendError(res, 'Gagal menghapus notifikasi.');
   }
 };
+
+// Aliases
+export const getNotifications = getUserNotifications;
+export const getUnreadCount = getUnreadNotificationCount;

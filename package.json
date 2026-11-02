@@ -5,8 +5,6 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-
-
     "migrate": "tsx src/scripts/migrate.ts",
     "build": "tsc --project tsconfig.json",
     "start": "node dist/server.js",
@@ -22,12 +20,14 @@
   "type": "commonjs",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@hookform/resolvers": "^6.0.2",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.6",
     "dotenv": "^18.0.7",
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.1",
+    "firebase-admin": "^14.5.0",
     "google-auth-library": "^9.15.1",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
@@ -35,6 +35,7 @@
     "mysql2": "^3.24.5",
     "nodemailer": "^10.2.0",
     "pusher": "^5.3.4",
+    "sequelize": "^6.37.8",
     "zod": "^4.6.7"
   },
   "devDependencies": {

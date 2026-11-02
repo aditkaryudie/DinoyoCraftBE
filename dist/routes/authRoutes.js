@@ -12,6 +12,7 @@ const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js"
 const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
 // Registrasi & Login
+router.post('/register-customer', authController_js_1.registerCustomer);
 router.post('/register-mitra', uploadMiddleware_js_1.uploadMitraDocs, (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.registerMitraSchema), authController_js_1.registerMitra);
 router.post('/login', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.loginSchema), authController_js_1.loginMitra);
 router.post('/login-mitra', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.loginSchema), authController_js_1.loginMitra);
@@ -24,5 +25,7 @@ router.post('/reset-password', (0, validatorMiddleware_js_1.validateZod)(schemas
 router.get('/profile', authMiddleware_js_1.verifyToken, authController_js_1.getProfile);
 router.put('/profile', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.uploadProfileImages, (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateProfileSchema), authController_js_1.updateProfile);
 router.post('/reupload-docs', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.uploadMitraDocs, authController_js_1.reuploadDocs);
+// FCM Device Token
+router.post('/fcm-token', authMiddleware_js_1.verifyToken, authController_js_1.saveFcmToken);
 exports.default = router;
 //# sourceMappingURL=authRoutes.js.map

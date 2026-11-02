@@ -15,6 +15,10 @@ const uploadMiddleware_js_1 = __importDefault(require("../middlewares/uploadMidd
 const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js");
 const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
+// Route Publik untuk Mobile & Tamu
+router.get('/public', productController_js_1.getPublicProducts);
+router.get('/:id/public', productController_js_1.getPublicProductDetail);
+// Route untuk produk mitra
 router.get('/', authMiddleware_js_1.verifyToken, productController_js_1.getProdukMitra);
 router.post('/', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.default.single('image'), (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.createProductSchema), productController_js_1.tambahProduk);
 router.put('/:id', authMiddleware_js_1.verifyToken, (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateProductSchema), mitraController_js_1.updateProduct);

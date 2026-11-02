@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteNotification = exports.markAllAsRead = exports.markAsRead = exports.getUserNotifications = void 0;
+exports.getUnreadCount = exports.getNotifications = exports.deleteNotification = exports.markAllAsRead = exports.markAsRead = exports.getUnreadNotificationCount = exports.getUserNotifications = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
 const getUserNotifications = async (_req, res) => {
@@ -29,6 +29,18 @@ const getUserNotifications = async (_req, res) => {
     }
 };
 exports.getUserNotifications = getUserNotifications;
+const getUnreadNotificationCount = async (_req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        const [unreadRows] = await database_js_1.default.query('SELECT COUNT(*) as unread_count FROM notifications WHERE user_id = ? AND is_read = 0', [userId]);
+        (0, response_js_1.sendSuccess)(res, { unread_count: unreadRows[0]?.unread_count || 0 }, 'Jumlah notifikasi belum dibaca.');
+    }
+    catch (error) {
+        console.error('❌ [getUnreadNotificationCount] Error:', error);
+        (0, response_js_1.sendError)(res, 'Gagal mengambil jumlah notifikasi.');
+    }
+};
+exports.getUnreadNotificationCount = getUnreadNotificationCount;
 const markAsRead = async (req, res) => {
     try {
         const userId = res.locals['userId'];
@@ -75,4 +87,7 @@ const deleteNotification = async (req, res) => {
     }
 };
 exports.deleteNotification = deleteNotification;
+// Aliases
+exports.getNotifications = exports.getUserNotifications;
+exports.getUnreadCount = exports.getUnreadNotificationCount;
 //# sourceMappingURL=notificationController.js.map

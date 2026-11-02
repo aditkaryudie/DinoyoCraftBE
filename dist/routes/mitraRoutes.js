@@ -14,6 +14,10 @@ const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js");
 const schemas_js_1 = require("../validators/schemas.js");
 const router = express_1.default.Router();
+// Route Publik Profil Toko Mitra untuk Konsumsi Mobile & Tamu
+router.get('/public', mitraController_js_1.getPublicMitraStores);
+router.get('/:id/public', mitraController_js_1.getPublicMitraDetail);
+// Route terlindungi oleh middleware verifyToken
 router.get('/dashboard', authMiddleware_js_1.verifyToken, mitraController_js_1.getDashboardMitra);
 router.get('/store-profile', authMiddleware_js_1.verifyToken, storeController_js_1.getStoreProfile);
 router.get('/finance', authMiddleware_js_1.verifyToken, mitraController_js_1.getFinanceReport);
