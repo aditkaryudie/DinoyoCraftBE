@@ -50,7 +50,7 @@ export const checkoutOrderSchema = z.object({
   shipping_method: z.string().default('Reguler'),
   shipping_cost: z.coerce.number().min(0).default(0),
   customer_notes: z.string().max(500).optional().nullable(),
-  payment_method: z.enum(['qris', 'transfer', 'cod', 'va']).default('qris'),
+  payment_method: z.string().min(1).default('qris'),
   items: z.array(checkoutItemSchema).min(1, 'Pesanan minimal harus memiliki 1 produk'),
 });
 
@@ -212,4 +212,28 @@ export const handleReportActionSchema = z.object({
 
 export const handleDeletionActionSchema = z.object({
   action: z.enum(['approved', 'rejected']),
+});
+
+
+// ============================================================
+// 11. Skema Payment Gateway (SociaBuzz)
+// ============================================================
+export const paymentFeesSchema = z.object({
+  country: z.string().min(1, 'Negara wajib diisi').default('Indonesia'),
+  amount: z.coerce.number().int().positive('Nominal pembayaran harus bilangan bulat > 0'),
+  username: z.string().optional(),
+});
+
+export const paymentMethodsSchema = z.object({
+  token: z.string().min(1, 'Token sesi pembayaran wajib diisi'),
+});
+
+export const createPaymentSchema = z.object({
+  order_id: z.coerce.number().int().positive('ID pesanan wajib valid'),
+  payment_method: z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
+});
+
+export const directCreatePaymentSchema = z.object({
+  token: z.string().min(1, 'Token sesi pembayaran wajib diisi'),
+  payment_method: z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
 });

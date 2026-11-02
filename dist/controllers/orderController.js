@@ -196,7 +196,12 @@ const getOrderById = async (req, res) => {
          a.postal_code,
          t.reference_code,
          t.transaction_type AS payment_method,
-         t.status AS payment_status
+         t.status AS payment_status,
+         t.payment_token,
+         t.inv_id,
+         t.payment_url,
+         t.qr_string,
+         t.gateway_fee
        FROM orders o
        JOIN mitra_profiles m ON o.mitra_id = m.id
        LEFT JOIN user_addresses a ON o.address_id = a.id

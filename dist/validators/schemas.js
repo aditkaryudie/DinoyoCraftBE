@@ -4,7 +4,7 @@
 //  Skema Validasi Zod Komprehensif untuk Seluruh REST API DinoyoCraft
 // ============================================================
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleDeletionActionSchema = exports.handleReportActionSchema = exports.aiAnalysisSchema = exports.verifyMitraStoreSchema = exports.createMasterDataSchema = exports.updateUserStatusSchema = exports.sendMessageSchema = exports.updateProductSchema = exports.createProductSchema = exports.updateProfileSchema = exports.resetPasswordSchema = exports.verifyOtpSchema = exports.forgotPasswordSchema = exports.googleLoginSchema = exports.loginSchema = exports.registerMitraSchema = exports.replyReviewSchema = exports.createReviewSchema = exports.updateOrderStatusSchema = exports.checkoutOrderSchema = exports.checkoutItemSchema = exports.updateCartSchema = exports.addToCartSchema = exports.updateAddressSchema = exports.createAddressSchema = void 0;
+exports.directCreatePaymentSchema = exports.createPaymentSchema = exports.paymentMethodsSchema = exports.paymentFeesSchema = exports.handleDeletionActionSchema = exports.handleReportActionSchema = exports.aiAnalysisSchema = exports.verifyMitraStoreSchema = exports.createMasterDataSchema = exports.updateUserStatusSchema = exports.sendMessageSchema = exports.updateProductSchema = exports.createProductSchema = exports.updateProfileSchema = exports.resetPasswordSchema = exports.verifyOtpSchema = exports.forgotPasswordSchema = exports.googleLoginSchema = exports.loginSchema = exports.registerMitraSchema = exports.replyReviewSchema = exports.createReviewSchema = exports.updateOrderStatusSchema = exports.checkoutOrderSchema = exports.checkoutItemSchema = exports.updateCartSchema = exports.addToCartSchema = exports.updateAddressSchema = exports.createAddressSchema = void 0;
 const zod_1 = require("zod");
 // ============================================================
 // 1. Skema Alamat Pengiriman (User Addresses)
@@ -46,7 +46,7 @@ exports.checkoutOrderSchema = zod_1.z.object({
     shipping_method: zod_1.z.string().default('Reguler'),
     shipping_cost: zod_1.z.coerce.number().min(0).default(0),
     customer_notes: zod_1.z.string().max(500).optional().nullable(),
-    payment_method: zod_1.z.enum(['qris', 'transfer', 'cod', 'va']).default('qris'),
+    payment_method: zod_1.z.string().min(1).default('qris'),
     items: zod_1.z.array(exports.checkoutItemSchema).min(1, 'Pesanan minimal harus memiliki 1 produk'),
 });
 exports.updateOrderStatusSchema = zod_1.z.object({
@@ -189,5 +189,24 @@ exports.handleReportActionSchema = zod_1.z.object({
 });
 exports.handleDeletionActionSchema = zod_1.z.object({
     action: zod_1.z.enum(['approved', 'rejected']),
+});
+// ============================================================
+// 11. Skema Payment Gateway (SociaBuzz)
+// ============================================================
+exports.paymentFeesSchema = zod_1.z.object({
+    country: zod_1.z.string().min(1, 'Negara wajib diisi').default('Indonesia'),
+    amount: zod_1.z.coerce.number().int().positive('Nominal pembayaran harus bilangan bulat > 0'),
+    username: zod_1.z.string().optional(),
+});
+exports.paymentMethodsSchema = zod_1.z.object({
+    token: zod_1.z.string().min(1, 'Token sesi pembayaran wajib diisi'),
+});
+exports.createPaymentSchema = zod_1.z.object({
+    order_id: zod_1.z.coerce.number().int().positive('ID pesanan wajib valid'),
+    payment_method: zod_1.z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
+});
+exports.directCreatePaymentSchema = zod_1.z.object({
+    token: zod_1.z.string().min(1, 'Token sesi pembayaran wajib diisi'),
+    payment_method: zod_1.z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
 });
 //# sourceMappingURL=schemas.js.map

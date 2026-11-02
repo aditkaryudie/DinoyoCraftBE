@@ -129,6 +129,11 @@ const tables = [
     \`amount\` decimal(15,2) NOT NULL DEFAULT '0.00',
     \`status\` enum('pending','success','failed','cancelled') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
     \`reference_code\` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`payment_token\` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`inv_id\` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`payment_url\` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`qr_string\` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`gateway_fee\` decimal(15,2) NOT NULL DEFAULT '0.00',
     \`notes\` text COLLATE utf8mb4_unicode_ci,
     \`proof_image_url\` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -370,6 +375,12 @@ const runMigration = async () => {
 
     await ensureColumn('orders', 'shipping_method', "VARCHAR(100) DEFAULT 'Reguler' AFTER shipping_cost");
     await ensureColumn('orders', 'customer_notes', 'TEXT NULL AFTER tracking_number');
+
+    await ensureColumn('transactions', 'payment_token', 'VARCHAR(255) NULL AFTER reference_code');
+    await ensureColumn('transactions', 'inv_id', 'VARCHAR(255) NULL AFTER payment_token');
+    await ensureColumn('transactions', 'payment_url', 'VARCHAR(500) NULL AFTER inv_id');
+    await ensureColumn('transactions', 'qr_string', 'TEXT NULL AFTER payment_url');
+    await ensureColumn('transactions', 'gateway_fee', 'DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER qr_string');
 
     await ensureColumn('order_items', 'variant', 'VARCHAR(100) NULL AFTER product_id');
 

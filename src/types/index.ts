@@ -116,6 +116,11 @@ export interface TransactionEntity extends RowDataPacket {
   amount: number;
   status: 'pending' | 'success' | 'failed' | 'cancelled';
   reference_code: string;
+  payment_token?: string | null;
+  inv_id?: string | null;
+  payment_url?: string | null;
+  qr_string?: string | null;
+  gateway_fee?: number;
   notes?: string;
   created_at: Date;
   updated_at: Date;
@@ -176,4 +181,42 @@ export interface CreateMasterDataDto {
   key: string;
   value: string;
   description?: string;
+}
+
+
+// -----------------------------------------------------------
+// 8. Payment Gateway Interfaces
+// -----------------------------------------------------------
+export interface PaymentFeeInfo {
+  fee_type?: string;
+  fee_rate?: string | number;
+  fee_fixed?: string | number;
+  total_fee?: string | number;
+  total_pay?: string | number;
+  min_amount?: number;
+  max_amount?: number;
+}
+
+export interface PaymentMethodItem {
+  id: number;
+  name: string;
+  label: string;
+  group?: string;
+  gateway?: string;
+  fee?: PaymentFeeInfo;
+}
+
+export interface CreatePaymentResult {
+  order_id: number;
+  transaction_id: number;
+  reference_code: string;
+  payment_method: string;
+  label?: string;
+  amount: number;
+  fee?: PaymentFeeInfo;
+  payment_url?: string | null;
+  qr_string?: string | null;
+  token?: string;
+  inv_id?: string | null;
+  payment_status: 'pending' | 'paid' | 'failed' | 'expired';
 }

@@ -38,12 +38,7 @@ export declare const checkoutOrderSchema: z.ZodObject<{
     shipping_method: z.ZodDefault<z.ZodString>;
     shipping_cost: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     customer_notes: z.ZodNullable<z.ZodOptional<z.ZodString>>;
-    payment_method: z.ZodDefault<z.ZodEnum<{
-        cod: "cod";
-        qris: "qris";
-        transfer: "transfer";
-        va: "va";
-    }>>;
+    payment_method: z.ZodDefault<z.ZodString>;
     items: z.ZodArray<z.ZodObject<{
         product_id: z.ZodCoercedNumber<unknown>;
         quantity: z.ZodCoercedNumber<unknown>;
@@ -184,5 +179,21 @@ export declare const handleDeletionActionSchema: z.ZodObject<{
         approved: "approved";
         rejected: "rejected";
     }>;
+}, z.core.$strip>;
+export declare const paymentFeesSchema: z.ZodObject<{
+    country: z.ZodDefault<z.ZodString>;
+    amount: z.ZodCoercedNumber<unknown>;
+    username: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const paymentMethodsSchema: z.ZodObject<{
+    token: z.ZodString;
+}, z.core.$strip>;
+export declare const createPaymentSchema: z.ZodObject<{
+    order_id: z.ZodCoercedNumber<unknown>;
+    payment_method: z.ZodDefault<z.ZodString>;
+}, z.core.$strip>;
+export declare const directCreatePaymentSchema: z.ZodObject<{
+    token: z.ZodString;
+    payment_method: z.ZodDefault<z.ZodString>;
 }, z.core.$strip>;
 //# sourceMappingURL=schemas.d.ts.map
