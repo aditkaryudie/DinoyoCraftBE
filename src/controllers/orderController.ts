@@ -255,7 +255,20 @@ export const getUserOrders = async (req: Request, res: Response): Promise<void> 
       });
     }
 
-    sendSuccess(res, orders, 'Daftar riwayat pesanan berhasil diambil.');
+    // Normalisasi angka: mysql2 mengembalikan DECIMAL sebagai string —
+    // kirim sebagai number agar klien mobile tidak salah parse.
+    const normalized = (orders as any[]).map((o) => ({
+      ...o,
+      total_amount: Number(o.total_amount ?? 0),
+      shipping_cost: Number(o.shipping_cost ?? 0),
+      items: (o.items || []).map((it: any) => ({
+        ...it,
+        quantity: Number(it.quantity ?? 0),
+        unit_price: Number(it.unit_price ?? 0),
+      })),
+    }));
+
+    sendSuccess(res, normalized, 'Daftar riwayat pesanan berhasil diambil.');
   } catch (error) {
     console.error('❌ [getUserOrders] Error:', error);
     sendError(res, 'Gagal mengambil riwayat pesanan.');
