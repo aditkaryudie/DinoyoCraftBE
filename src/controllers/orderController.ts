@@ -27,6 +27,21 @@ export async function recordOrderStatusHistory(
 }
 
 
+// ============================================================
+// HELPER — total tagihan pembayar (satu angka untuk semua layar):
+// barang + ongkir + biaya platform (1.000 + 5%) + fee channel (0,705%)
+// ============================================================
+export function computeOrderTotals(o: {
+  total_amount: any;
+  gateway_fee?: any;
+}): { base: number; platform: number; channel: number; total_due: number } {
+  const base = Number(o.total_amount || 0);
+  const storedFee = Number(o.gateway_fee ?? 0);
+  const platform = storedFee > 0 ? storedFee : 1000 + Math.round((base * 5) / 100);
+  const channel = Math.round(((base + platform) * 705) / 100000);
+  return { base, platform, channel, total_due: base + platform + channel };
+}
+
 export const checkout = async (req: Request, res: Response): Promise<void> => {
   const connection = await pool.getConnection();
   try {
@@ -203,6 +218,7 @@ export const getUserOrders = async (req: Request, res: Response): Promise<void> 
         o.shipping_cost,
         o.shipping_method,
         o.tracking_number,
+        t.gateway_fee,
         o.customer_notes,
         o.status,
         o.created_at,
@@ -257,16 +273,22 @@ export const getUserOrders = async (req: Request, res: Response): Promise<void> 
 
     // Normalisasi angka: mysql2 mengembalikan DECIMAL sebagai string —
     // kirim sebagai number agar klien mobile tidak salah parse.
-    const normalized = (orders as any[]).map((o) => ({
-      ...o,
-      total_amount: Number(o.total_amount ?? 0),
-      shipping_cost: Number(o.shipping_cost ?? 0),
-      items: (o.items || []).map((it: any) => ({
-        ...it,
-        quantity: Number(it.quantity ?? 0),
-        unit_price: Number(it.unit_price ?? 0),
-      })),
-    }));
+    const normalized = (orders as any[]).map((o) => {
+      const totals = computeOrderTotals(o);
+      return {
+        ...o,
+        total_amount: Number(o.total_amount ?? 0),
+        shipping_cost: Number(o.shipping_cost ?? 0),
+        platform_fee: totals.platform,
+        channel_fee: totals.channel,
+        total_due: totals.total_due,
+        items: (o.items || []).map((it: any) => ({
+          ...it,
+          quantity: Number(it.quantity ?? 0),
+          unit_price: Number(it.unit_price ?? 0),
+        })),
+      };
+    });
 
     sendSuccess(res, normalized, 'Daftar riwayat pesanan berhasil diambil.');
   } catch (error) {
@@ -621,7 +643,7 @@ export const getOrderTracking = async (req: Request, res: Response): Promise<voi
 
     const [orders]: any = await pool.query(
       `SELECT o.id, o.user_id, o.status, o.tracking_number, o.shipping_method,
-              o.shipping_cost, o.total_amount, o.created_at,
+              o.shipping_cost, o.total_amount, t.gateway_fee, o.created_at,
               m.store_name, m.workshop_address,
               t.reference_code
        FROM orders o
@@ -666,6 +688,8 @@ export const getOrderTracking = async (req: Request, res: Response): Promise<voi
       [id]
     );
 
+    const trackingTotals = computeOrderTotals(order);
+
     sendSuccess(res, {
       order_id: order.id,
       status: order.status,
@@ -673,6 +697,9 @@ export const getOrderTracking = async (req: Request, res: Response): Promise<voi
       shipping_method: order.shipping_method,
       shipping_cost: Number(order.shipping_cost || 0),
       total_amount: Number(order.total_amount || 0),
+      platform_fee: trackingTotals.platform,
+      channel_fee: trackingTotals.channel,
+      total_due: trackingTotals.total_due,
       reference_code: order.reference_code,
       store_name: order.store_name,
       created_at: order.created_at,
