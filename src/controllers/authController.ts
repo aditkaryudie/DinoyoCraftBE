@@ -571,10 +571,11 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       try {
         const client = new OAuth2Client();
         const validAudiences: string[] = [
+          process.env['GOOGLE_CLIENT_ID'],
           process.env['GOOGLE_CLIENT_ID_WEB'],
           process.env['GOOGLE_CLIENT_ID_MOBILE'],
-          process.env['GOOGLE_CLIENT_ID'],
-          process.env['GOOGLE_CLIENT_ID_ALT']
+          process.env['GOOGLE_CLIENT_ID_ALT'],
+          '379734738528-dc5htqtqu1k8qn5khubul347aghuka6r.apps.googleusercontent.com'
         ].filter((id): id is string => Boolean(id && typeof id === 'string' && id.trim().length > 0));
 
         const ticket = await client.verifyIdToken({
