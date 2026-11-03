@@ -26,5 +26,7 @@ router.post('/methods', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.p
 router.post('/create', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.createPaymentSchema), paymentController_js_1.createOrderPayment);
 // 6. Cek status pembayaran secara real-time untuk order
 router.get('/status/:orderId', paymentController_js_1.checkOrderStatus);
+// 7. DEV/DEMO ONLY — simulasi pembayaran lunas tanpa uang asli
+router.post('/simulate-paid/:orderId', paymentController_js_1.simulatePayment);
 exports.default = router;
 //# sourceMappingURL=paymentRoutes.js.map

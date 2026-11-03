@@ -40,7 +40,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPaymentStatus = exports.createPayment = exports.getPaymentMethods = exports.handleWebhook = exports.checkOrderStatus = exports.createOrderPayment = exports.getMethods = exports.getFees = exports.getCountries = void 0;
+exports.simulatePayment = exports.getPaymentStatus = exports.createPayment = exports.getPaymentMethods = exports.handleWebhook = exports.checkOrderStatus = exports.createOrderPayment = exports.getMethods = exports.getFees = exports.getCountries = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
@@ -350,4 +350,61 @@ exports.handleWebhook = handleWebhook;
 exports.getPaymentMethods = exports.getMethods;
 exports.createPayment = exports.createOrderPayment;
 exports.getPaymentStatus = exports.checkOrderStatus;
+// ------------------------------------------------------------
+// 7. SIMULASI PEMBAYARAN (DEV/DEMO ONLY)
+//    Menandai pesanan lunas TANPA uang asli — untuk menguji alur
+//    checkout → saldo mitra saat presentasi. Dimatikan di production.
+// ------------------------------------------------------------
+const simulatePayment = async (req, res) => {
+    if (process.env['NODE_ENV'] === 'production') {
+        (0, response_js_1.sendForbidden)(res, 'Endpoint simulasi hanya tersedia di lingkungan development.');
+        return;
+    }
+    const connection = await database_js_1.default.getConnection();
+    try {
+        const userId = res.locals['userId'];
+        const userRole = res.locals['role'];
+        const orderId = Number(req.params.orderId);
+        const [orders] = await connection.query(`SELECT o.id, o.user_id, o.total_amount, o.status AS order_status,
+              t.id AS transaction_id, t.status AS transaction_status,
+              m.user_id AS mitra_user_id
+       FROM orders o
+       JOIN transactions t ON o.transaction_id = t.id
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       WHERE o.id = ?`, [orderId]);
+        if (orders.length === 0) {
+            (0, response_js_1.sendNotFound)(res, `Pesanan #${orderId} tidak ditemukan.`);
+            return;
+        }
+        const order = orders[0];
+        if (order.user_id !== userId && order.mitra_user_id !== userId && userRole !== 'admin') {
+            (0, response_js_1.sendForbidden)(res, 'Anda tidak berhak mensimulasi pembayaran pesanan ini.');
+            return;
+        }
+        if (order.order_status === 'paid' || order.transaction_status === 'success') {
+            (0, response_js_1.sendBadRequest)(res, 'Pesanan ini sudah lunas.');
+            return;
+        }
+        const settled = await (0, orderSettlement_js_1.settleOrderPaid)({
+            id: order.transaction_id,
+            order_id: order.id,
+            user_id: order.user_id,
+            mitra_user_id: order.mitra_user_id,
+            total_amount: order.total_amount,
+        });
+        (0, response_js_1.sendSuccess)(res, {
+            order_id: order.id,
+            simulated: true,
+            settled,
+            note: 'Pembayaran disimulasikan — gunakan PATCH /api/orders/:id/status (status: completed) untuk menandai pesanan selesai sehingga masuk saldo mitra.',
+        }, 'Pembayaran (simulasi) berhasil — pesanan kini berstatus PAID.');
+    }
+    catch (error) {
+        (0, response_js_1.sendError)(res, error.message || 'Gagal mensimulasikan pembayaran.', error.status || 500);
+    }
+    finally {
+        connection.release();
+    }
+};
+exports.simulatePayment = simulatePayment;
 //# sourceMappingURL=paymentController.js.map

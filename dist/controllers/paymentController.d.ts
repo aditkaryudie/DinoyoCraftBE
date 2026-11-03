@@ -8,4 +8,5 @@ export declare const handleWebhook: (req: Request, res: Response) => Promise<voi
 export declare const getPaymentMethods: typeof getMethods;
 export declare const createPayment: typeof createOrderPayment;
 export declare const getPaymentStatus: typeof checkOrderStatus;
+export declare const simulatePayment: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=paymentController.d.ts.map

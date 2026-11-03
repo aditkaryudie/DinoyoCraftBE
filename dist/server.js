@@ -30,7 +30,7 @@ const startServer = async () => {
     console.log('✅ AI Settings table synced and ready.');
     // Background poller pembayaran SociaBuzz (pengganti dispatcher Go scbz).
     (0, paymentPoller_js_1.startPaymentPoller)();
-    app_js_1.default.listen(Number(PORT), '0.0.0.0', () => {
+    const server = app_js_1.default.listen(Number(PORT), '0.0.0.0', () => {
         console.log('='.repeat(50));
         console.log(`🚀 DinoyoCraft API Server running`);
         console.log(`   Host     : 0.0.0.0 (Accessible from Mobile & Local Network)`);
@@ -40,6 +40,9 @@ const startServer = async () => {
         console.log(`   Health   : http://localhost:${PORT}/health`);
         console.log('='.repeat(50));
     });
+    server.on('error', (err) => {
+        console.error('❌ Server HTTP error:', err);
+    });
 };
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason) => {
@@ -48,6 +51,13 @@ process.on('unhandledRejection', (reason) => {
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
     console.error('⚠️ Uncaught Exception:', err);
+});
+process.on('exit', (code) => {
+    console.log(`🛑 Node process exited with code: ${code}`);
+});
+process.on('SIGINT', () => {
+    console.log('🛑 Received SIGINT, shutting down gracefully...');
+    process.exit(0);
 });
 startServer().catch((err) => {
     console.error('❌ Gagal menjalankan server:', err);
