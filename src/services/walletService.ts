@@ -7,6 +7,7 @@
 // ============================================================
 
 import pool from '../config/database.js';
+import { sendPushNotificationToUser } from './notificationService.js';
 
 const COMPLETED_STATUSES = ['completed', 'delivered', 'selesai'];
 const PENDING_EARN_STATUSES = ['paid', 'packed', 'shipped', 'processing'];
@@ -153,6 +154,14 @@ export async function requestWithdrawal(
         `Penarikan Rp ${amount.toLocaleString('id-ID')} ke ${params.bank_name.trim()} ${params.account_number.trim()} telah diproses. Dana akan masuk sesuai ketentuan bank (1-2 hari kerja).`,
         insertId,
       ]
+    );
+
+    // Push FCM ke mitra (non-blocking).
+    void sendPushNotificationToUser(
+      userId,
+      'Penarikan Berhasil Diproses',
+      `Penarikan Rp ${amount.toLocaleString('id-ID')} ke ${params.bank_name.trim()} ${params.account_number.trim()} telah diproses. Dana akan masuk sesuai ketentuan bank (1-2 hari kerja).`,
+      { type: 'withdrawal', route: '/profile' }
     );
 
     await connection.commit();

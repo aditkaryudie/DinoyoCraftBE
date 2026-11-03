@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import pool from '../config/database.js';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendForbidden, sendError } from '../utils/response.js';
 import pusher from '../utils/pusher.js';
+import { sendPushNotificationToUser } from '../services/notificationService.js';
 
 // ============================================================
 // HELPER — catat riwayat status pesanan (timeline tracking)
@@ -529,6 +530,16 @@ export const updateOrderStatus = async (req: Request, res: Response): Promise<vo
       });
     } catch { /* non-blocking */ }
 
+    // Push FCM ke HP customer (non-blocking).
+    if (statusMessages[status]) {
+      void sendPushNotificationToUser(
+        order.user_id,
+        `Status Pesanan #${id}: ${status.toUpperCase()}`,
+        statusMessages[status],
+        { type: 'order', route: '/profile', order_id: String(id), status }
+      );
+    }
+
     sendSuccess(res, { order_id: Number(id), status, tracking_number }, 'Status pesanan berhasil diperbarui.');
   } catch (error) {
     await connection.rollback();
@@ -621,6 +632,13 @@ export const cancelOrderByCustomer = async (req: Request, res: Response): Promis
         status: 'cancelled',
       });
     } catch { /* non-blocking */ }
+
+    void sendPushNotificationToUser(
+      order.mitra_user_id,
+      'Pesanan Dibatalkan',
+      `Pesanan #${id} dibatalkan oleh pembeli sebelum pembayaran.`,
+      { type: 'order', route: '/profile', order_id: String(id), status: 'cancelled' }
+    );
 
     sendSuccess(res, { order_id: Number(id), status: 'cancelled' }, 'Pesanan berhasil dibatalkan.');
   } catch (error) {

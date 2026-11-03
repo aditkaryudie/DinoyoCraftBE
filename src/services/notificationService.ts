@@ -35,7 +35,6 @@ export const sendPushNotificationToUser = async (
         priority: 'high',
         notification: {
           sound: 'default',
-          channelId: 'dinoyocraft_channel',
         },
       },
     });

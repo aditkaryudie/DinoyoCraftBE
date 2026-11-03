@@ -6,6 +6,7 @@
 // ============================================================
 
 import pool from '../config/database.js';
+import { sendPushNotificationToUser } from './notificationService.js';
 import pusher from '../utils/pusher.js';
 
 export interface PendingTransactionRow {
@@ -95,6 +96,20 @@ export async function settleOrderPaid(trx: {
     } catch {
       // Pusher gagal — non-blocking.
     }
+
+    // Push FCM ke perangkat mitra & pembeli (non-blocking).
+    void sendPushNotificationToUser(
+      trx.mitra_user_id,
+      'Pembayaran Diterima!',
+      `Pesanan #${trx.order_id} telah dibayar lunas sebesar Rp ${Number(trx.total_amount || 0).toLocaleString('id-ID')}. Segera proses pesanan ini.`,
+      { type: 'order', route: '/profile', order_id: String(trx.order_id) }
+    );
+    void sendPushNotificationToUser(
+      trx.user_id,
+      'Pembayaran Berhasil',
+      `Pembayaran pesanan #${trx.order_id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
+      { type: 'order', route: '/profile', order_id: String(trx.order_id) }
+    );
 
     console.log(`✅ [settleOrderPaid] Pesanan #${trx.order_id} ditandai LUNAS.`);
     return true;
