@@ -73,7 +73,7 @@ export const createOrderPayment = async (req: Request, res: Response): Promise<v
     const [orders]: any = await connection.query(
       `SELECT o.id, o.user_id, o.total_amount, o.status AS order_status,
               t.id AS transaction_id, t.reference_code, t.status AS transaction_status,
-              t.payment_token, t.inv_id, t.payment_url, t.qr_string,
+              t.payment_token, t.inv_id, t.payment_url, t.qr_string, t.gateway_fee,
               u.name AS user_name, u.email AS user_email
        FROM orders o
        JOIN transactions t ON o.transaction_id = t.id
@@ -103,6 +103,39 @@ export const createOrderPayment = async (req: Request, res: Response): Promise<v
 
     if (order.order_status === 'cancelled') {
       sendBadRequest(res, 'Pesanan ini telah dibatalkan.');
+      return;
+    }
+
+    // 3b. IDEMPOTEN: bila sesi pembayaran untuk pesanan ini sudah ada dan
+    // masih pending, kembalikan data tersimpan (QR & nominal SAMA) —
+    // jangan membuat sesi baru setiap layar pembayaran dibuka.
+    if (order.payment_token && order.order_status === 'pending' &&
+        (order.qr_string || order.payment_url)) {
+      const storedBase = Number(order.total_amount);
+      const storedPlatformFee = Number(order.gateway_fee ?? 0);
+      const storedCharge = storedBase + storedPlatformFee;
+      const storedChannelFee = Math.round(storedCharge * 705 / 100000);
+      const storedTotalPay = storedCharge + storedChannelFee;
+
+      sendSuccess(res, {
+        order_id: order.id,
+        transaction_id: order.transaction_id,
+        reference_code: order.reference_code,
+        payment_method: order.transaction_type,
+        label: order.transaction_type,
+        base_amount: storedBase,
+        service_fee: storedPlatformFee,
+        channel_fee: storedChannelFee,
+        amount: storedTotalPay,
+        fee: { total_fee: storedChannelFee, total_pay: storedTotalPay },
+        total_pay: storedTotalPay,
+        payment_url: order.payment_url,
+        qr_string: order.qr_string,
+        token: order.payment_token,
+        inv_id: order.inv_id,
+        payment_status: 'pending',
+        reused: true,
+      }, 'Sesi pembayaran sudah ada — QR dan nominal tetap sama.');
       return;
     }
 
