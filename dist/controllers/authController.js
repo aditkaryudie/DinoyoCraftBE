@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resendRegisterOtp = exports.verifyRegisterOtp = exports.reuploadDocs = exports.resetPassword = exports.verifyOtp = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.googleLogin = exports.loginMitra = exports.login = exports.registerMitra = exports.saveFcmToken = exports.registerCustomer = void 0;
+exports.checkUsername = exports.resendRegisterOtp = exports.verifyRegisterOtp = exports.reuploadDocs = exports.resetPassword = exports.verifyOtp = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.googleLogin = exports.loginMitra = exports.login = exports.registerMitra = exports.saveFcmToken = exports.registerCustomer = void 0;
 const emailService_js_1 = require("../utils/emailService.js");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
@@ -14,7 +14,7 @@ const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const registerCustomer = async (req, res) => {
     try {
-        const { name, email, password, phone, google_id, avatar_url, isGoogleAuth } = req.body;
+        const { name, email, password, phone, username, google_id, avatar_url, isGoogleAuth } = req.body;
         const isGoogle = Boolean(isGoogleAuth || google_id);
         if (!name || !email) {
             res.status(400).json({
@@ -25,6 +25,18 @@ const registerCustomer = async (req, res) => {
             return;
         }
         const cleanEmail = email.trim().toLowerCase();
+        const cleanUsername = username ? String(username).trim().toLowerCase() : null;
+        if (cleanUsername) {
+            const [existingUsernames] = await database_1.default.query('SELECT id FROM users WHERE username = ?', [cleanUsername]);
+            if (existingUsernames && existingUsernames.length > 0) {
+                res.status(409).json({
+                    success: false,
+                    message: 'Username sudah digunakan. Silakan pilih username lain.',
+                    meta: { timestamp: new Date().toISOString() }
+                });
+                return;
+            }
+        }
         // 1. Cek apakah email sudah terdaftar di database
         const [existingUsers] = await database_1.default.query('SELECT id, name, email, role, google_id, avatar_url FROM users WHERE email = ?', [cleanEmail]);
         if (existingUsers && existingUsers.length > 0) {
@@ -59,7 +71,7 @@ const registerCustomer = async (req, res) => {
         // 2. Jika pendaftaran lewat Google: langsung aktifkan tanpa OTP
         if (isGoogle) {
             const passwordHash = password ? await bcrypt_1.default.hash(password, 10) : null;
-            const [result] = await database_1.default.query('INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, ?, "pengunjung", 1, ?, ?)', [name.trim(), cleanEmail, passwordHash, google_id || null, avatar_url || null]);
+            const [result] = await database_1.default.query('INSERT INTO users (name, username, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, ?, ?, "pengunjung", 1, ?, ?)', [name.trim(), cleanUsername, cleanEmail, passwordHash, google_id || null, avatar_url || null]);
             const newUserId = result.insertId;
             if (phone && phone.trim()) {
                 await database_1.default.query('INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE phone = VALUES(phone)', [newUserId, name.trim(), phone.trim(), 'Belum ada alamat lengkap']).catch(() => { });
@@ -101,6 +113,7 @@ const registerCustomer = async (req, res) => {
             type: 'register',
             data: {
                 name: name.trim(),
+                username: cleanUsername,
                 email: cleanEmail,
                 password,
                 phone: phone ? phone.trim() : null,
@@ -1207,7 +1220,8 @@ const verifyRegisterOtp = async (req, res) => {
             return;
         }
         const passwordHash = await bcrypt_1.default.hash(regPass, 10);
-        const [result] = await database_1.default.query('INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, "pengunjung", 1)', [regName, cleanEmail, passwordHash]);
+        const regUsername = (req.body.username || regData.username || '').trim().toLowerCase() || null;
+        const [result] = await database_1.default.query('INSERT INTO users (name, username, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, "pengunjung", 1)', [regName, regUsername, cleanEmail, passwordHash]);
         const newUserId = result.insertId;
         if (regPhone && regPhone.trim()) {
             await database_1.default.query('INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE phone = VALUES(phone)', [newUserId, regName, regPhone.trim(), 'Belum ada alamat lengkap']).catch(() => { });
@@ -1284,4 +1298,64 @@ const resendRegisterOtp = async (req, res) => {
     }
 };
 exports.resendRegisterOtp = resendRegisterOtp;
+// ============================================================
+// Cek Ketersediaan Username
+// ============================================================
+const checkUsername = async (req, res) => {
+    try {
+        const rawUsername = (req.query['username'] || req.body['username'] || '').toString();
+        const username = rawUsername.trim().toLowerCase();
+        if (!username) {
+            res.status(200).json({
+                success: true,
+                available: false,
+                message: 'Username wajib diisi',
+            });
+            return;
+        }
+        if (username.length < 3) {
+            res.status(200).json({
+                success: true,
+                available: false,
+                message: 'Username minimal 3 karakter',
+            });
+            return;
+        }
+        if (username.length > 30) {
+            res.status(200).json({
+                success: true,
+                available: false,
+                message: 'Username maksimal 30 karakter',
+            });
+            return;
+        }
+        const regex = /^[a-zA-Z0-9_]+$/;
+        if (!regex.test(username)) {
+            res.status(200).json({
+                success: true,
+                available: false,
+                message: 'Username hanya boleh huruf, angka, dan underscore (_)',
+            });
+            return;
+        }
+        const [rows] = await database_1.default.query('SELECT id FROM users WHERE username = ? LIMIT 1', [username]);
+        const isAvailable = !rows || rows.length === 0;
+        res.status(200).json({
+            success: true,
+            available: isAvailable,
+            username,
+            message: isAvailable ? 'Username tersedia' : 'Username sudah digunakan',
+            meta: { timestamp: new Date().toISOString() },
+        });
+    }
+    catch (error) {
+        console.error('Error checkUsername:', error);
+        res.status(500).json({
+            success: false,
+            available: false,
+            message: 'Gagal memeriksa ketersediaan username.',
+        });
+    }
+};
+exports.checkUsername = checkUsername;
 //# sourceMappingURL=authController.js.map

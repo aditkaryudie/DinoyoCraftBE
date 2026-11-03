@@ -19,6 +19,7 @@ import {
   resetPassword,
   reuploadDocs,
   saveFcmToken,
+  checkUsername,
 } from '../controllers/authController.js';
 import { uploadMitraDocs, uploadProfileImages } from '../middlewares/uploadMiddleware.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
@@ -36,6 +37,8 @@ import {
 const router = Router();
 
 // Registrasi & Login
+router.get('/check-username', checkUsername);
+router.post('/check-username', checkUsername);
 router.post('/register-customer', registerCustomer);
 router.post('/verify-register-otp', verifyRegisterOtp);
 router.post('/resend-register-otp', resendRegisterOtp);

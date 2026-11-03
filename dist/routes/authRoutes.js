@@ -12,6 +12,8 @@ const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js"
 const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
 // Registrasi & Login
+router.get('/check-username', authController_js_1.checkUsername);
+router.post('/check-username', authController_js_1.checkUsername);
 router.post('/register-customer', authController_js_1.registerCustomer);
 router.post('/verify-register-otp', authController_js_1.verifyRegisterOtp);
 router.post('/resend-register-otp', authController_js_1.resendRegisterOtp);

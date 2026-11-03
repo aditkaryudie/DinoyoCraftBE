@@ -11,7 +11,7 @@ import fs from 'fs';
 
 export const registerCustomer = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password, phone, google_id, avatar_url, isGoogleAuth } = req.body;
+    const { name, email, password, phone, username, google_id, avatar_url, isGoogleAuth } = req.body;
     const isGoogle = Boolean(isGoogleAuth || google_id);
 
     if (!name || !email) {
@@ -24,6 +24,21 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const cleanUsername = username ? String(username).trim().toLowerCase() : null;
+    if (cleanUsername) {
+      const [existingUsernames]: any = await db.query(
+        'SELECT id FROM users WHERE username = ?',
+        [cleanUsername]
+      );
+      if (existingUsernames && existingUsernames.length > 0) {
+        res.status(409).json({
+          success: false,
+          message: 'Username sudah digunakan. Silakan pilih username lain.',
+          meta: { timestamp: new Date().toISOString() }
+        });
+        return;
+      }
+    }
 
     // 1. Cek apakah email sudah terdaftar di database
     const [existingUsers]: any = await db.query(
@@ -73,8 +88,8 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
     if (isGoogle) {
       const passwordHash = password ? await bcrypt.hash(password, 10) : null;
       const [result]: any = await db.query(
-        'INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, ?, "pengunjung", 1, ?, ?)',
-        [name.trim(), cleanEmail, passwordHash, google_id || null, avatar_url || null]
+        'INSERT INTO users (name, username, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, ?, ?, "pengunjung", 1, ?, ?)',
+        [name.trim(), cleanUsername, cleanEmail, passwordHash, google_id || null, avatar_url || null]
       );
       const newUserId = result.insertId;
 
@@ -130,6 +145,7 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
       type: 'register',
       data: {
         name: name.trim(),
+        username: cleanUsername,
         email: cleanEmail,
         password,
         phone: phone ? phone.trim() : null,
@@ -1413,9 +1429,10 @@ export const verifyRegisterOtp = async (req: Request, res: Response): Promise<vo
     }
 
     const passwordHash = await bcrypt.hash(regPass, 10);
+    const regUsername = (req.body.username || regData.username || '').trim().toLowerCase() || null;
     const [result]: any = await db.query(
-      'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, "pengunjung", 1)',
-      [regName, cleanEmail, passwordHash]
+      'INSERT INTO users (name, username, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, "pengunjung", 1)',
+      [regName, regUsername, cleanEmail, passwordHash]
     );
     const newUserId = result.insertId;
 
@@ -1505,5 +1522,70 @@ export const resendRegisterOtp = async (req: Request, res: Response): Promise<vo
   } catch (error) {
     console.error('Error resendRegisterOtp:', error);
     res.status(500).json({ success: false, message: 'Gagal mengirim ulang kode OTP.' });
+  }
+};
+
+// ============================================================
+// Cek Ketersediaan Username
+// ============================================================
+export const checkUsername = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawUsername = (req.query['username'] || req.body['username'] || '').toString();
+    const username = rawUsername.trim().toLowerCase();
+
+    if (!username) {
+      res.status(200).json({
+        success: true,
+        available: false,
+        message: 'Username wajib diisi',
+      });
+      return;
+    }
+
+    if (username.length < 3) {
+      res.status(200).json({
+        success: true,
+        available: false,
+        message: 'Username minimal 3 karakter',
+      });
+      return;
+    }
+
+    if (username.length > 30) {
+      res.status(200).json({
+        success: true,
+        available: false,
+        message: 'Username maksimal 30 karakter',
+      });
+      return;
+    }
+
+    const regex = /^[a-zA-Z0-9_]+$/;
+    if (!regex.test(username)) {
+      res.status(200).json({
+        success: true,
+        available: false,
+        message: 'Username hanya boleh huruf, angka, dan underscore (_)',
+      });
+      return;
+    }
+
+    const [rows]: any = await db.query('SELECT id FROM users WHERE username = ? LIMIT 1', [username]);
+    const isAvailable = !rows || rows.length === 0;
+
+    res.status(200).json({
+      success: true,
+      available: isAvailable,
+      username,
+      message: isAvailable ? 'Username tersedia' : 'Username sudah digunakan',
+      meta: { timestamp: new Date().toISOString() },
+    });
+  } catch (error) {
+    console.error('Error checkUsername:', error);
+    res.status(500).json({
+      success: false,
+      available: false,
+      message: 'Gagal memeriksa ketersediaan username.',
+    });
   }
 };
