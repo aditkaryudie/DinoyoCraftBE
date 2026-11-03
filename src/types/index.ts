@@ -13,6 +13,8 @@ export interface JwtPayload {
   userId: number;
   email: string;
   role: UserRole;
+  /** Versi sesi — dicocokkan dengan users.token_version (force-logout) */
+  ver?: number;
   iat?: number;
   exp?: number;
 }

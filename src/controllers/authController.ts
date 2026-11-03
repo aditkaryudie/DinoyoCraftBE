@@ -8,6 +8,39 @@ import nodemailer from 'nodemailer';
 import path from 'path';
 import fs from 'fs';
 
+// ============================================================
+// Helper JWT — Access + Refresh Token Pair
+// ============================================================
+interface TokenPair {
+  token: string;
+  refresh_token: string;
+}
+
+const signTokenPair = (user: { id: number; email: string; role: string; ver?: number }): TokenPair => {
+  const jwtSecret = process.env['JWT_SECRET'];
+  if (!jwtSecret) throw new Error('JWT_SECRET tidak ditemukan di environment variables!');
+
+  const refreshSecret = process.env['JWT_REFRESH_SECRET'] || jwtSecret;
+  const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+  const refreshExpiresIn = process.env['JWT_REFRESH_EXPIRES_IN'] || '30d';
+
+  const ver = user.ver ?? 0;
+
+  const token = jwt.sign(
+    { userId: user.id, email: user.email, role: user.role, ver },
+    jwtSecret,
+    { expiresIn: jwtExpiresIn as any }
+  );
+
+  const refresh_token = jwt.sign(
+    { userId: user.id, email: user.email, role: user.role, ver, type: 'refresh' },
+    refreshSecret,
+    { expiresIn: refreshExpiresIn as any }
+  );
+
+  return { token, refresh_token };
+};
+
 
 export const registerCustomer = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -42,7 +75,7 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
 
     // 1. Cek apakah email sudah terdaftar di database
     const [existingUsers]: any = await db.query(
-      'SELECT id, name, email, role, google_id, avatar_url FROM users WHERE email = ?',
+      'SELECT id, name, email, role, google_id, avatar_url, token_version FROM users WHERE email = ?',
       [cleanEmail]
     );
 
@@ -54,18 +87,13 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
           'UPDATE users SET google_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
           [google_id || null, avatar_url || null, existing.id]
         );
-        const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
-        const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
-        const token = jwt.sign(
-          { userId: existing.id, email: cleanEmail, role: existing.role },
-          jwtSecret,
-          { expiresIn: jwtExpiresIn as any }
-        );
+        const { token, refresh_token } = signTokenPair({ id: existing.id, email: cleanEmail, role: existing.role, ver: existing.token_version });
         res.status(200).json({
           success: true,
           message: 'Akun Google berhasil dihubungkan!',
           data: {
             token,
+            refresh_token,
             id: existing.id,
             name: existing.name,
             email: cleanEmail,
@@ -100,19 +128,14 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
         ).catch(() => {});
       }
 
-      const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
-      const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
-      const token = jwt.sign(
-        { userId: newUserId, email: cleanEmail, role: 'pengunjung' },
-        jwtSecret,
-        { expiresIn: jwtExpiresIn as any }
-      );
+      const { token, refresh_token } = signTokenPair({ id: newUserId, email: cleanEmail, role: 'pengunjung' });
 
       res.status(201).json({
         success: true,
         message: 'Pendaftaran pengunjung berhasil!',
         data: {
           token,
+          refresh_token,
           id: newUserId,
           name: name.trim(),
           email: cleanEmail,
@@ -170,7 +193,6 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
       data: {
         email: cleanEmail,
         requires_otp: true,
-        otp: otp,
       },
       meta: { timestamp: new Date().toISOString() }
     });
@@ -220,33 +242,33 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
 
     if (!name || !email || !whatsapp_number || !store_name || !workshop_address) {
       await connection.rollback();
-      res.status(400).json({ message: 'Semua data teks wajib diisi' });
+      res.status(400).json({ success: false, message: 'Semua data teks wajib diisi' });
       return;
     }
 
     const nameRegex = /^[a-zA-Z\s]+$/;
     if (!nameRegex.test(name.trim())) {
       await connection.rollback();
-      res.status(400).json({ message: 'Format nama tidak valid (hanya huruf dan spasi)' });
+      res.status(400).json({ success: false, message: 'Format nama tidak valid (hanya huruf dan spasi)' });
       return;
     }
 
     const phoneRegex = /^[0-9]+$/;
     if (!phoneRegex.test(whatsapp_number.trim())) {
       await connection.rollback();
-      res.status(400).json({ message: 'Nomor HP hanya boleh berisi angka' });
+      res.status(400).json({ success: false, message: 'Nomor HP hanya boleh berisi angka' });
       return;
     }
 
     if (whatsapp_number.trim().length < 10 || whatsapp_number.trim().length > 14) {
       await connection.rollback();
-      res.status(400).json({ message: 'Nomor HP harus 10-14 digit' });
+      res.status(400).json({ success: false, message: 'Nomor HP harus 10-14 digit' });
       return;
     }
 
     if (!files || !files.ktp_file || !files.nib_file || !files.product_images) {
       await connection.rollback();
-      res.status(400).json({ message: 'File KTP, NIB, dan Foto Produk wajib diunggah' });
+      res.status(400).json({ success: false, message: 'File KTP, NIB, dan Foto Produk wajib diunggah' });
       return;
     }
 
@@ -261,7 +283,7 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
       );
       if (existingProfile.length > 0 && existingProfile[0].ktp_file_url) {
         await connection.rollback();
-        res.status(409).json({ message: 'Email sudah terdaftar sebagai Mitra' });
+        res.status(409).json({ success: false, message: 'Email sudah terdaftar sebagai Mitra' });
         return;
       }
 
@@ -361,7 +383,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     const query = `
-      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, u.avatar_url,
+      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, u.avatar_url, u.token_version,
              m.store_name, m.is_verified, m.rejection_reason
       FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
@@ -409,13 +431,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
-    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      jwtSecret,
-      { expiresIn: jwtExpiresIn as any }
-    );
+    const { token, refresh_token } = signTokenPair({ id: user.id, email: user.email, role: user.role, ver: user.token_version });
 
     res.cookie('token', token, {
       httpOnly: true,
@@ -429,6 +445,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       message: 'Login berhasil!',
       data: {
         token: token,
+        refresh_token: refresh_token,
         id: user.id,
         name: user.name,
         email: user.email,
@@ -468,7 +485,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     }
 
     const query = `
-      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
+      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, u.token_version,
              m.store_name, m.is_verified, m.rejection_reason
       FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
@@ -524,13 +541,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
-    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      jwtSecret,
-      { expiresIn: jwtExpiresIn as any }
-    );
+    const { token, refresh_token } = signTokenPair({ id: user.id, email: user.email, role: user.role, ver: user.token_version });
 
     res.cookie('token', token, {
       httpOnly: true,
@@ -544,6 +555,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
       message: 'Login berhasil!',
       data: {
         token: token,
+        refresh_token: refresh_token,
         id: user.id,
         name: user.name,
         email: user.email,
@@ -635,7 +647,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
     }
 
     const query = `
-      SELECT u.id, u.name, u.email, u.role, u.is_active, u.google_id, u.avatar_url,
+      SELECT u.id, u.name, u.email, u.role, u.is_active, u.google_id, u.avatar_url, u.token_version,
              m.store_name, m.is_verified, m.rejection_reason
       FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
@@ -740,13 +752,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
-    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
-    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      jwtSecret,
-      { expiresIn: jwtExpiresIn as any }
-    );
+    const { token, refresh_token } = signTokenPair({ id: user.id, email: user.email, role: user.role, ver: user.token_version });
 
     res.cookie('token', token, {
       httpOnly: true,
@@ -762,6 +768,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       token,
       data: {
         token,
+        refresh_token,
         id: user.id,
         name: user.name,
         email: user.email,
@@ -1403,7 +1410,7 @@ export const verifyRegisterOtp = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    if (entry.code !== otp.trim() && otp.trim() !== '123456') {
+    if (entry.code !== otp.trim()) {
       res.status(400).json({
         success: false,
         message: 'Kode OTP salah. Periksa kembali kode yang Anda terima.',
@@ -1445,19 +1452,14 @@ export const verifyRegisterOtp = async (req: Request, res: Response): Promise<vo
 
     otpStore.delete(cleanEmail);
 
-    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
-    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
-    const token = jwt.sign(
-      { userId: newUserId, email: cleanEmail, role: 'pengunjung' },
-      jwtSecret,
-      { expiresIn: jwtExpiresIn as any }
-    );
+    const { token, refresh_token } = signTokenPair({ id: newUserId, email: cleanEmail, role: 'pengunjung' });
 
     res.status(201).json({
       success: true,
       message: 'Pendaftaran pengunjung berhasil terverifikasi!',
       data: {
         token,
+        refresh_token,
         id: newUserId,
         name: regName,
         email: cleanEmail,
@@ -1515,7 +1517,6 @@ export const resendRegisterOtp = async (req: Request, res: Response): Promise<vo
       message: 'Kode OTP baru telah dikirim ke email Anda.',
       data: {
         email: cleanEmail,
-        otp: otp,
       },
       meta: { timestamp: new Date().toISOString() }
     });
@@ -1587,5 +1588,75 @@ export const checkUsername = async (req: Request, res: Response): Promise<void> 
       available: false,
       message: 'Gagal memeriksa ketersediaan username.',
     });
+  }
+};
+
+// ============================================================
+// REFRESH TOKEN — Perpanjang sesi dengan refresh token
+// Body: { refresh_token: string }
+// ============================================================
+export const refreshToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refresh_token } = req.body;
+
+    if (!refresh_token || typeof refresh_token !== 'string') {
+      res.status(400).json({ success: false, message: 'Refresh token wajib dikirim' });
+      return;
+    }
+
+    const refreshSecret = process.env['JWT_REFRESH_SECRET'] || process.env['JWT_SECRET'];
+    if (!refreshSecret) {
+      res.status(500).json({ success: false, message: 'Konfigurasi server tidak lengkap' });
+      return;
+    }
+
+    let decoded: any;
+    try {
+      decoded = jwt.verify(refresh_token, refreshSecret);
+    } catch (err) {
+      res.status(401).json({ success: false, message: 'Refresh token tidak valid atau kedaluwarsa. Silakan login ulang.' });
+      return;
+    }
+
+    if (decoded.type !== 'refresh') {
+      res.status(401).json({ success: false, message: 'Token bukan refresh token. Silakan login ulang.' });
+      return;
+    }
+
+    // Pastikan user masih aktif & versi token masih berlaku (tidak di-kick)
+    const [users]: any = await db.query('SELECT id, email, role, is_active, token_version FROM users WHERE id = ? LIMIT 1', [decoded.userId]);
+    if (!users || users.length === 0) {
+      res.status(401).json({ success: false, message: 'Pengguna tidak ditemukan. Silakan login ulang.' });
+      return;
+    }
+    const user = users[0];
+    if (user.is_active === 0) {
+      res.status(403).json({ success: false, message: 'Akun Anda sedang dinonaktifkan.' });
+      return;
+    }
+    if ((decoded.ver ?? 0) !== user.token_version) {
+      res.status(401).json({ success: false, message: 'Sesi Anda telah diakhiri dari perangkat lain. Silakan login ulang.' });
+      return;
+    }
+
+    const { token, refresh_token: newRefreshToken } = signTokenPair({ id: user.id, email: user.email, role: user.role, ver: user.token_version });
+
+    res.status(200).json({
+      success: true,
+      message: 'Token berhasil diperbarui.',
+      data: {
+        token,
+        refresh_token: newRefreshToken,
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      },
+      meta: { timestamp: new Date().toISOString() }
+    });
+    return;
+  } catch (error) {
+    console.error('Error refresh token:', error);
+    res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server' });
+    return;
   }
 };

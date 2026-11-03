@@ -347,6 +347,38 @@ const tables = [
     PRIMARY KEY (\`id\`),
     KEY \`idx_notifications_user\` (\`user_id\`),
     CONSTRAINT \`fk_notifications_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // 22. order_status_history — timeline pelacakan pesanan
+  `CREATE TABLE IF NOT EXISTS \`order_status_history\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`order_id\` int UNSIGNED NOT NULL,
+    \`status\` varchar(30) NOT NULL,
+    \`tracking_number\` varchar(100) DEFAULT NULL,
+    \`note\` varchar(255) DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_osh_order\` (\`order_id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // 23. withdrawal_requests — pengajuan tarik saldo mitra
+  `CREATE TABLE IF NOT EXISTS \`withdrawal_requests\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`mitra_id\` int UNSIGNED NOT NULL,
+    \`amount\` bigint NOT NULL,
+    \`fee\` bigint NOT NULL DEFAULT 0,
+    \`bank_name\` varchar(100) NOT NULL,
+    \`account_number\` varchar(50) NOT NULL,
+    \`account_name\` varchar(100) NOT NULL,
+    \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    \`admin_note\` varchar(255) DEFAULT NULL,
+    \`processed_by\` int UNSIGNED DEFAULT NULL,
+    \`processed_at\` datetime DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_wr_user\` (\`user_id\`),
+    KEY \`idx_wr_status\` (\`status\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
 ];
 
@@ -430,6 +462,10 @@ const runMigration = async () => {
     await ensureColumn('transactions', 'gateway_fee', 'DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER qr_string');
 
     await ensureColumn('order_items', 'variant', 'VARCHAR(100) NULL AFTER product_id');
+
+    // Kolom type notifikasi fleksibel (DB lama sempat berupa ENUM yang menolak
+    // nilai baru seperti 'withdrawal').
+    await db.query("ALTER TABLE `notifications` MODIFY `type` varchar(50) NOT NULL DEFAULT 'system'");
 
     // 5. Seeding data awal aman (INSERT IGNORE)
     console.log('🌱 Menyuntikkan seed data awal (Super Admin & Kategori)...');

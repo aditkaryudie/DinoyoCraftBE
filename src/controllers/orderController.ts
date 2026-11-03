@@ -6,6 +6,26 @@
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendForbidden, sendError } from '../utils/response.js';
+import pusher from '../utils/pusher.js';
+
+// ============================================================
+// HELPER — catat riwayat status pesanan (timeline tracking)
+// ============================================================
+export async function recordOrderStatusHistory(
+  orderId: number,
+  status: string,
+  trackingNumber?: string | null,
+  note?: string | null,
+  conn?: any
+): Promise<void> {
+  const query = 'INSERT INTO order_status_history (order_id, status, tracking_number, note) VALUES (?, ?, ?, ?)';
+  if (conn) {
+    await conn.query(query, [orderId, status, trackingNumber || null, note || null]);
+  } else {
+    await pool.query(query, [orderId, status, trackingNumber || null, note || null]);
+  }
+}
+
 
 export const checkout = async (req: Request, res: Response): Promise<void> => {
   const connection = await pool.getConnection();
@@ -122,6 +142,9 @@ export const checkout = async (req: Request, res: Response): Promise<void> => {
         [userId, item.product_id]
       );
     }
+
+    // 7b. Catat status awal untuk timeline tracking
+    await recordOrderStatusHistory(orderId, 'pending', null, 'Pesanan dibuat, menunggu pembayaran', connection);
 
     // 8. Kirim Notifikasi Sistem ke Mitra & Pelanggan
     await connection.query(
@@ -448,7 +471,28 @@ export const updateOrderStatus = async (req: Request, res: Response): Promise<vo
       );
     }
 
+    // Catat ke timeline tracking (hanya jika status berubah)
+    if (order.status !== status) {
+      const notes: Record<string, string> = {
+        paid: 'Pembayaran terverifikasi',
+        packed: 'Penjual sedang mengemas pesanan',
+        shipped: 'Paket diserahkan ke kurir',
+        completed: 'Pesanan diterima dan selesai',
+        cancelled: 'Pesanan dibatalkan',
+      };
+      await recordOrderStatusHistory(Number(id), status, tracking_number || null, notes[status] || null, connection);
+    }
+
     await connection.commit();
+
+    // Dorong update realtime ke HP customer (non-blocking).
+    try {
+      await pusher.trigger(`user-${order.user_id}`, 'order-status-changed', {
+        order_id: Number(id),
+        status,
+        tracking_number: tracking_number || null,
+      });
+    } catch { /* non-blocking */ }
 
     sendSuccess(res, { order_id: Number(id), status, tracking_number }, 'Status pesanan berhasil diperbarui.');
   } catch (error) {
@@ -463,6 +507,98 @@ export const updateOrderStatus = async (req: Request, res: Response): Promise<vo
 
 
 // Aliases
+// ============================================================
+// GET /api/orders/:id/tracking — Timeline pelacakan pesanan
+// ============================================================
+export const getOrderTracking = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    const role = res.locals['role'];
+    const { id } = req.params;
+
+    const [orders]: any = await pool.query(
+      `SELECT o.id, o.user_id, o.status, o.tracking_number, o.shipping_method,
+              o.shipping_cost, o.total_amount, o.created_at,
+              m.store_name, m.workshop_address,
+              t.reference_code
+       FROM orders o
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN transactions t ON o.transaction_id = t.id
+       WHERE o.id = ?`,
+      [id]
+    );
+
+    if (orders.length === 0) {
+      sendNotFound(res, 'Pesanan tidak ditemukan.');
+      return;
+    }
+    const order = orders[0];
+
+    if (order.user_id !== userId && role !== 'admin') {
+      // mitra pemilik toko juga boleh melihat
+      const [own]: any = await pool.query(
+        'SELECT id FROM mitra_profiles WHERE user_id = ? AND id = (SELECT mitra_id FROM orders WHERE id = ?)',
+        [userId, id]
+      );
+      if (!own || own.length === 0) {
+        sendForbidden(res, 'Anda tidak berhak melihat pelacakan pesanan ini.');
+        return;
+      }
+    }
+
+    const [history]: any = await pool.query(
+      `SELECT status, tracking_number, note, created_at
+       FROM order_status_history
+       WHERE order_id = ?
+       ORDER BY id ASC`,
+      [id]
+    );
+
+    const [items]: any = await pool.query(
+      `SELECT oi.product_id, oi.quantity, oi.unit_price, oi.variant,
+              p.name AS product_name, p.image_urls
+       FROM order_items oi
+       JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = ?`,
+      [id]
+    );
+
+    sendSuccess(res, {
+      order_id: order.id,
+      status: order.status,
+      tracking_number: order.tracking_number,
+      shipping_method: order.shipping_method,
+      shipping_cost: Number(order.shipping_cost || 0),
+      total_amount: Number(order.total_amount || 0),
+      reference_code: order.reference_code,
+      store_name: order.store_name,
+      created_at: order.created_at,
+      timeline: history,
+      items: items.map((it: any) => {
+        let images: string[] = [];
+        try {
+          const raw = it.image_urls;
+          if (Array.isArray(raw)) images = raw;
+          else if (typeof raw === 'string' && raw.trim()) {
+            images = raw.trim().startsWith('[') ? JSON.parse(raw) : [raw];
+          }
+        } catch { /* ignore */ }
+        return {
+          product_id: it.product_id,
+          product_name: it.product_name,
+          quantity: it.quantity,
+          unit_price: Number(it.unit_price),
+          variant: it.variant,
+          image: images[0] || null,
+        };
+      }),
+    }, 'Timeline pelacakan berhasil diambil.');
+  } catch (error) {
+    console.error('❌ [getOrderTracking] Error:', error);
+    sendError(res, 'Gagal mengambil timeline pelacakan.');
+  }
+};
+
 export const checkoutOrder = checkout;
 export const getOrders = getUserOrders;
 export const getOrderDetail = getOrderById;

@@ -10,13 +10,54 @@ export interface SupportedCountry {
 }
 
 export const SUPPORTED_COUNTRIES: Record<string, { currency: string; iso2: string }> = {
-  Indonesia: { currency: 'IDR', iso2: 'ID' },
+  // Southeast Asia
   Malaysia: { currency: 'MYR', iso2: 'MY' },
+  Indonesia: { currency: 'IDR', iso2: 'ID' },
   Singapore: { currency: 'SGD', iso2: 'SG' },
   Philippines: { currency: 'PHP', iso2: 'PH' },
   Thailand: { currency: 'THB', iso2: 'TH' },
-  Vietnam: { currency: 'VND', iso2: 'VN' },
+  // South Asia
+  Pakistan: { currency: 'PKR', iso2: 'PK' },
+  Bangladesh: { currency: 'BDT', iso2: 'BD' },
+  'Sri Lanka': { currency: 'LKR', iso2: 'LK' },
+  // Middle East
+  'United Arab Emirates': { currency: 'AED', iso2: 'AE' },
+  'Saudi Arabia': { currency: 'SAR', iso2: 'SA' },
+  Qatar: { currency: 'QAR', iso2: 'QA' },
+  // Africa
+  Nigeria: { currency: 'NGN', iso2: 'NG' },
+  'South Africa': { currency: 'ZAR', iso2: 'ZA' },
+  // Europe
+  'United Kingdom': { currency: 'GBP', iso2: 'GB' },
+  Denmark: { currency: 'DKK', iso2: 'DK' },
+  // Oceania
+  Australia: { currency: 'AUD', iso2: 'AU' },
+  'New Zealand': { currency: 'NZD', iso2: 'NZ' },
+  // Americas
+  'United States': { currency: 'USD', iso2: 'US' },
 };
+
+/**
+ * Label tampilan untuk group channel pembayaran (port dari constants.go scbz).
+ */
+export const GROUP_LABELS: Record<string, string> = {
+  ewallet: 'E-Wallet',
+  ewallet_id: 'E-Wallet',
+  ewallet_all: 'E-Wallet',
+  qris: 'QRIS',
+  bank_transfer: 'Bank Transfer',
+  bank_transfer_inter: 'Bank Transfer',
+  direct_debit: 'Direct Debit',
+  bank_redirect: 'Bank Redirect',
+  retail_outlet: 'Retail Outlet',
+  retail_outlet_ph: 'Retail Outlet',
+  credit_card: 'Card',
+  credit_card_stripe: 'Card',
+  crypto: 'Crypto',
+};
+
+export const groupLabel = (rawGroup: string): string =>
+  GROUP_LABELS[rawGroup] || rawGroup;
 
 const COMMON_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -64,6 +105,22 @@ export class CookieJar {
   public getCsrf(): string {
     return this.cookies.get('sociabuzz_sb_cookie_csrf') || this.cookies.get('csrf_cookie_name') || '';
   }
+}
+
+export interface FeeEstimate {
+  id: number;
+  name: string;
+  label: string;
+  group: string;
+  gateway: string;
+  currency: string;
+  amount: number;
+  fee: {
+    fee_type: string;
+    fee_rate: string;
+    total_fee: number;
+    total_pay: number;
+  };
 }
 
 export class SociabuzzClient {
@@ -455,6 +512,69 @@ export class SociabuzzClient {
     } catch (_) {}
 
     return 'pending';
+  }
+
+  /**
+   * 7. Estimasi fee LIVE per metode pembayaran (port FeeCalculator dari scbz Go).
+   * Membuka sesi donasi sementara (tidak pernah dibayar, otomatis kadaluarsa)
+   * lalu membaca tabel fee nyata dari SociaBuzz untuk negara + nominal terkait.
+   */
+  async estimateFees(
+    country: string,
+    amount: number,
+    username: string,
+    jar: CookieJar
+  ): Promise<FeeEstimate[]> {
+    const countryInfo = SUPPORTED_COUNTRIES[country];
+    if (!countryInfo) {
+      throw new Error(`Negara "${country}" tidak didukung. Gunakan salah satu dari: ${Object.keys(SUPPORTED_COUNTRIES).join(', ')}`);
+    }
+    const currency = countryInfo.currency;
+
+    // Sesi sementara — nama/email dummy agar tidak mengganggu data pelanggan.
+    const donation = await this.submitDonation(
+      username,
+      amount,
+      'Fee Estimate',
+      'noreply@dinoyocraft.local',
+      'fee-estimate',
+      jar,
+      country
+    );
+
+    await this.visitPaymentPage(donation.token, jar);
+    const settings = await this.getPaymentSettings(donation.token, amount, country, jar);
+
+    const estimates: FeeEstimate[] = [];
+    let counter = 0;
+    for (const group of settings.payment_channel || []) {
+      for (const m of group.available || []) {
+        if (!m.active) continue;
+        counter++;
+        const totalFee = Number(m.total_fee ?? m.fee ?? 0);
+        const totalPay = Number(m.total_pay ?? amount + totalFee);
+        const feeRate =
+          amount > 0 && totalFee > 0
+            ? `${((totalFee / amount) * 100).toFixed(2)}%`
+            : 'flat';
+        estimates.push({
+          id: counter,
+          name: m.name,
+          label: m.alias || m.name,
+          group: groupLabel(group.name),
+          gateway: m.source || m.source_payment || 'oy',
+          currency,
+          amount,
+          fee: {
+            fee_type: feeRate === 'flat' ? 'fixed' : 'percent',
+            fee_rate: feeRate,
+            total_fee: totalFee,
+            total_pay: totalPay,
+          },
+        });
+      }
+    }
+    return estimates;
   }
 }
 

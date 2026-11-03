@@ -7,6 +7,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { JwtPayload, UserRole } from '../types/index.js';
 import { sendUnauthorized, sendForbidden } from '../utils/response.js';
+import db from '../config/database';
 
 const JWT_SECRET = process.env['JWT_SECRET'];
 if (!JWT_SECRET) {
@@ -18,11 +19,11 @@ if (!JWT_SECRET) {
  * Mengekstrak Bearer token dari header Authorization,
  * memverifikasi signature, lalu menyimpan payload ke res.locals.
  */
-export const verifyToken = (
+export const verifyToken = async (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Promise<void> => {
   let token: string | undefined;
   const authHeader = req.headers['authorization'];
 
@@ -48,6 +49,27 @@ export const verifyToken = (
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+
+    // Cek versi token: bila sesi dicabut dari perangkat lain (token_version
+    // dinaikkan via force-logout), semua token lama langsung ditolak.
+    const [rows] = (await db.query(
+      'SELECT token_version, is_active FROM users WHERE id = ? LIMIT 1',
+      [decoded.userId]
+    )) as [any[], unknown];
+    const dbUser = rows?.[0];
+
+    if (!dbUser) {
+      sendUnauthorized(res, 'Pengguna tidak ditemukan. Silakan login ulang.');
+      return;
+    }
+    if (dbUser.is_active === 0) {
+      sendForbidden(res, 'Akun Anda sedang dinonaktifkan.');
+      return;
+    }
+    if ((decoded.ver ?? 0) !== dbUser.token_version) {
+      sendUnauthorized(res, 'Sesi Anda telah diakhiri dari perangkat lain. Silakan login ulang.');
+      return;
+    }
 
     // Simpan payload ke res.locals dengan type assertion yang aman
     res.locals['userId'] = decoded.userId;

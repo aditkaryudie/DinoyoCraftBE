@@ -20,6 +20,7 @@ import {
   reuploadDocs,
   saveFcmToken,
   checkUsername,
+  refreshToken,
 } from '../controllers/authController.js';
 import { uploadMitraDocs, uploadProfileImages } from '../middlewares/uploadMiddleware.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
@@ -55,6 +56,9 @@ router.post('/google-register', validateZod(googleLoginSchema), (req, _res, next
 router.post('/forgot-password', validateZod(forgotPasswordSchema), forgotPassword);
 router.post('/verify-otp', validateZod(verifyOtpSchema), verifyOtp);
 router.post('/reset-password', validateZod(resetPasswordSchema), resetPassword);
+
+// Refresh Token (perpanjangan sesi mobile)
+router.post('/refresh', refreshToken);
 
 // Profil Pengguna & Dokumen
 router.get('/profile', verifyToken, getProfile);

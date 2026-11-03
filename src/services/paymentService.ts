@@ -4,7 +4,7 @@
 // ============================================================
 
 import dotenv from 'dotenv';
-import sociabuzzClient, { CookieJar, SUPPORTED_COUNTRIES } from './sociabuzzClient.js';
+import sociabuzzClient, { CookieJar, SUPPORTED_COUNTRIES, groupLabel } from './sociabuzzClient.js';
 dotenv.config();
 
 const SOCIABUZZ_USERNAME = process.env['SOCIABUZZ_USERNAME'] || 'dinoyocraft';
@@ -63,47 +63,116 @@ export function calculateServiceFee(baseAmount: number): {
   };
 }
 
-// 2. Hitung estimasi fee pembayaran
-export async function calculatePaymentFees(country: string, amount: number, _username?: string) {
-  const countryName = country.trim() || 'Indonesia';
-  const countryInfo = SUPPORTED_COUNTRIES[countryName] || SUPPORTED_COUNTRIES['Indonesia'];
-  const fixedQrisFee = Math.max(100, Math.round(amount * 0.007)); // Standar QRIS 0.7%
-  const serviceFee = calculateServiceFee(amount);
+// 2. Hitung estimasi fee pembayaran — LIVE dari SociaBuzz (port FeeCalculator
+//    scbz Go) dengan cache 10 menit per kombinasi negara+nominal, dan fallback
+//    statis bila gateway tidak dapat dihubungi.
+interface CacheEntry {
+  at: number;
+  methods: any[];
+}
+const feeCache = new Map<string, CacheEntry>();
+const FEE_CACHE_TTL = 10 * 60 * 1000;
 
-  return {
-    success: true,
-    country: countryName,
-    currency: countryInfo.currency,
-    amount,
-    service_fee: serviceFee,
-    methods: [
-      {
-        id: 1,
-        name: 'qris',
-        label: 'QRIS (Semua Bank & E-Wallet)',
-        group: 'QRIS',
-        gateway: 'oy',
-        fee: {
-          fee_type: 'percent',
-          fee_rate: '0.7%',
-          total_fee: fixedQrisFee,
-          total_pay: amount + fixedQrisFee,
-        },
+function staticFeeFallback(countryName: string, currency: string, amount: number) {
+  const fixedQrisFee = Math.max(100, Math.round(amount * 0.007)); // Standar QRIS 0.7%
+  return [
+    {
+      id: 1,
+      name: 'qris',
+      label: 'QRIS (Semua Bank & E-Wallet)',
+      group: 'QRIS',
+      gateway: 'oy',
+      fee: {
+        fee_type: 'percent',
+        fee_rate: '0.7%',
+        total_fee: fixedQrisFee,
+        total_pay: amount + fixedQrisFee,
       },
-      {
-        id: 2,
-        name: 'gopay',
-        label: 'GoPay',
-        group: 'E-Wallet',
-        gateway: 'oy',
-        fee: {
-          fee_type: 'fixed',
-          total_fee: 1000,
-          total_pay: amount + 1000,
-        },
+    },
+    {
+      id: 2,
+      name: 'gopay',
+      label: 'GoPay',
+      group: 'E-Wallet',
+      gateway: 'oy',
+      fee: {
+        fee_type: 'fixed',
+        fee_rate: 'flat',
+        total_fee: 1000,
+        total_pay: amount + 1000,
       },
-    ],
-  };
+    },
+  ].map((m) => ({ ...m, currency, country: countryName, live: false }));
+}
+
+export async function calculatePaymentFees(country: string, amount: number, _username?: string) {
+  const countryName = (country || 'Indonesia').trim();
+  const countryInfo = SUPPORTED_COUNTRIES[countryName] || SUPPORTED_COUNTRIES['Indonesia'];
+  const currency = countryInfo.currency;
+  const serviceFee = calculateServiceFee(amount);
+  const cacheKey = `${countryName}:${Math.round(amount)}`;
+
+  const cached = feeCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < FEE_CACHE_TTL) {
+    return {
+      success: true,
+      country: countryName,
+      currency,
+      amount,
+      service_fee: serviceFee,
+      methods: cached.methods,
+      live: true,
+      cached: true,
+    };
+  }
+
+  try {
+    const jar = new CookieJar();
+    const estimates = await sociabuzzClient.estimateFees(
+      countryName,
+      Math.round(amount),
+      SOCIABUZZ_USERNAME,
+      jar
+    );
+    if (!estimates || estimates.length === 0) throw new Error('Tabel fee kosong');
+
+    const methods = estimates.map((e) => ({
+      id: e.id,
+      name: e.name,
+      label: e.label,
+      group: e.group,
+      gateway: e.gateway,
+      currency: e.currency,
+      country: countryName,
+      fee: e.fee,
+      total_pay: e.fee.total_pay,
+      live: true,
+    }));
+    feeCache.set(cacheKey, { at: Date.now(), methods });
+
+    return {
+      success: true,
+      country: countryName,
+      currency,
+      amount,
+      service_fee: serviceFee,
+      methods,
+      live: true,
+      cached: false,
+    };
+  } catch (err: any) {
+    console.warn('⚠️ [calculatePaymentFees] Fee live gagal, pakai fallback statis:', err.message);
+    return {
+      success: true,
+      country: countryName,
+      currency,
+      amount,
+      service_fee: serviceFee,
+      methods: staticFeeFallback(countryName, currency, amount),
+      live: false,
+      cached: false,
+    };
+  }
 }
 
 // 3. Buat sesi donasi / pembayaran baru
@@ -166,8 +235,15 @@ export async function fetchPaymentMethods(token: string) {
         id: m.name,
         name: m.name,
         label: m.alias || m.name,
-        group: g.name,
+        group: groupLabel(g.name),
         gateway: m.source || 'oy',
+        active: !!m.active,
+        fee: {
+          fee_type: 'percent',
+          fee_rate: m.fee_rate || '',
+          total_fee: Number(m.total_fee ?? m.fee ?? 0),
+          total_pay: Number(m.total_pay ?? 0),
+        },
       }))
     ),
   };

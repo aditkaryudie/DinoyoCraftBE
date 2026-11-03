@@ -18,7 +18,7 @@ export declare function requestWithdrawal(userId: number, params: {
     account_number: string;
     account_name: string;
 }): Promise<{
-    id: any;
+    id: number;
     amount: number;
     fee: number;
     status: string;

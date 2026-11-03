@@ -19,6 +19,10 @@ import {
   CountResult,
 } from '../types/index.js';
 import { getAuthLocals } from '../middlewares/authMiddleware.js';
+import {
+  adminListWithdrawals,
+  adminHandleWithdrawal,
+} from '../services/walletService.js';
 
 const sanitizeUser = (user: UserEntity): SafeUser => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -194,6 +198,31 @@ export const updateUserStatus = async (req: Request, res: Response): Promise<voi
 };
 
 /**
+ * PATCH /api/admin/users/:id/force-logout
+ * Menaikkan token_version → seluruh access & refresh token pengguna di
+ * SEMUA perangkat langsung tidak berlaku (sesi diakhiri paksa).
+ */
+export const forceLogoutUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = parseInt((req.params as { id: string }).id ?? '0');
+
+    const [result] = await pool.execute(
+      'UPDATE users SET token_version = token_version + 1, updated_at = NOW() WHERE id = ?',
+      [userId]
+    );
+
+    if ((result as { affectedRows: number }).affectedRows === 0) {
+      sendNotFound(res, 'Pengguna tidak ditemukan.');
+      return;
+    }
+
+    sendSuccess(res, { userId }, 'Sesi pengguna telah diakhiri dari semua perangkat.');
+  } catch (err) {
+    sendError(res, 'Gagal mengakhiri sesi pengguna.', 500, String(err));
+  }
+};
+
+/**
  * GET /api/admin/master-data
  */
 export const getMasterData = async (req: Request, res: Response): Promise<void> => {
@@ -340,5 +369,47 @@ export const verifyMitraStore = async (req: Request, res: Response): Promise<voi
     sendSuccess(res, { mitraId, status, rejectionReason }, message);
   } catch (err) {
     sendError(res, 'Gagal memproses verifikasi toko mitra.', 500, String(err));
+  }
+};
+
+
+// ============================================================
+// WITHDRAWAL — persetujuan tarik saldo mitra
+// ============================================================
+
+/**
+ * GET /api/admin/withdrawals?status=pending
+ */
+export const getWithdrawals = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const status = (req.query['status'] as string) || undefined;
+    const rows = await adminListWithdrawals(status, Number(req.query['limit'] || 50));
+    sendSuccess(res, rows, 'Daftar pengajuan penarikan berhasil diambil.');
+  } catch (err) {
+    sendError(res, 'Gagal mengambil daftar penarikan.', 500, String(err));
+  }
+};
+
+/**
+ * PATCH /api/admin/withdrawals/:id
+ * Body: { action: 'approve' | 'reject', admin_note? }
+ */
+export const handleWithdrawalAction = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const admin = getAuthLocals(res);
+    const requestId = Number((req.params as { id: string }).id);
+    const { action, admin_note } = req.body as { action: string; admin_note?: string };
+
+    if (action !== 'approve' && action !== 'reject') {
+      sendBadRequest(res, "Field action harus 'approve' atau 'reject'.");
+      return;
+    }
+
+    const result = await adminHandleWithdrawal(admin.userId, requestId, action, admin_note);
+    sendSuccess(res, result, action === 'approve'
+      ? 'Penarikan disetujui. Segera transfer dana ke rekening mitra.'
+      : 'Penarikan ditolak dan saldo dikembalikan.');
+  } catch (err: any) {
+    sendError(res, err.message || 'Gagal memproses pengajuan.', err.status || 500);
   }
 };

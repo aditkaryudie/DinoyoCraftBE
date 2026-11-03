@@ -417,6 +417,9 @@ const runMigration = async () => {
         await ensureColumn('transactions', 'qr_string', 'TEXT NULL AFTER payment_url');
         await ensureColumn('transactions', 'gateway_fee', 'DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER qr_string');
         await ensureColumn('order_items', 'variant', 'VARCHAR(100) NULL AFTER product_id');
+        // Kolom type notifikasi fleksibel (DB lama sempat berupa ENUM yang menolak
+        // nilai baru seperti 'withdrawal').
+        await database_1.default.query("ALTER TABLE `notifications` MODIFY `type` varchar(50) NOT NULL DEFAULT 'system'");
         // 5. Seeding data awal aman (INSERT IGNORE)
         console.log('🌱 Menyuntikkan seed data awal (Super Admin & Kategori)...');
         for (const seedSql of seeds) {

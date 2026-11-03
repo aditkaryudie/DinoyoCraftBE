@@ -83,28 +83,42 @@ async function requestWithdrawal(userId, params) {
         throw Object.assign(new Error('Nama bank, nomor rekening, dan nama pemilik rekening wajib diisi.'), { status: 400 });
     }
     const fee = (0, exports.withdrawalFee)();
-    const [result] = await database_js_1.default.query(`INSERT INTO withdrawal_requests
-       (user_id, mitra_id, amount, fee, bank_name, account_number, account_name, status, processed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', NOW())`, [
-        userId,
-        mitra.id,
-        amount,
-        fee,
-        params.bank_name.trim(),
-        params.account_number.trim(),
-        params.account_name.trim(),
-    ]);
-    // Langsung disetujui (tanpa approval admin) — saldo otomatis terkunci
-    // karena status 'approved' ikut dihitung sebagai dana keluar.
-    await database_js_1.default.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
-     VALUES (?, ?, ?, 'withdrawal', ?)`, [
-        userId,
-        'Penarikan Berhasil Diproses',
-        `Penarikan Rp ${amount.toLocaleString('id-ID')} ke ${params.bank_name.trim()} ${params.account_number.trim()} telah diproses. Dana akan masuk sesuai ketentuan bank (1-2 hari kerja).`,
-        result.insertId,
-    ]);
+    const connection = await database_js_1.default.getConnection();
+    let insertId;
+    try {
+        await connection.beginTransaction();
+        const [result] = await connection.query(`INSERT INTO withdrawal_requests
+         (user_id, mitra_id, amount, fee, bank_name, account_number, account_name, status, processed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', NOW())`, [
+            userId,
+            mitra.id,
+            amount,
+            fee,
+            params.bank_name.trim(),
+            params.account_number.trim(),
+            params.account_name.trim(),
+        ]);
+        insertId = result.insertId;
+        // Langsung disetujui (tanpa approval admin) — saldo otomatis terkunci
+        // karena status 'approved' ikut dihitung sebagai dana keluar.
+        await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
+       VALUES (?, ?, ?, 'withdrawal', ?)`, [
+            userId,
+            'Penarikan Berhasil Diproses',
+            `Penarikan Rp ${amount.toLocaleString('id-ID')} ke ${params.bank_name.trim()} ${params.account_number.trim()} telah diproses. Dana akan masuk sesuai ketentuan bank (1-2 hari kerja).`,
+            insertId,
+        ]);
+        await connection.commit();
+    }
+    catch (err) {
+        await connection.rollback().catch(() => { });
+        throw err;
+    }
+    finally {
+        connection.release();
+    }
     return {
-        id: result.insertId,
+        id: insertId,
         amount,
         fee,
         status: 'approved',

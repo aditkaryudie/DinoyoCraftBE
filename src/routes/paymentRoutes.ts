@@ -11,6 +11,7 @@ import {
   createOrderPayment,
   checkOrderStatus,
   handleWebhook,
+  simulatePayment,
 } from '../controllers/paymentController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
 import { validateZod } from '../middlewares/validatorMiddleware.js';
@@ -44,6 +45,9 @@ router.post('/create', validateZod(createPaymentSchema), createOrderPayment);
 
 // 6. Cek status pembayaran secara real-time untuk order
 router.get('/status/:orderId', checkOrderStatus);
+
+// 7. DEV/DEMO ONLY — simulasi pembayaran lunas tanpa uang asli
+router.post('/simulate-paid/:orderId', simulatePayment);
 
 export default router;
 

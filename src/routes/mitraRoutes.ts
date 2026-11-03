@@ -10,7 +10,9 @@ import {
   getOrders,
   updateProduct,
   getPublicMitraStores,
-  getPublicMitraDetail
+  getPublicMitraDetail,
+  getMitraWallet,
+  requestMitraWithdrawal
 } from '../controllers/mitraController.js';
 import { getStoreProfile } from '../controllers/storeController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
@@ -27,6 +29,10 @@ router.get('/:id/public', getPublicMitraDetail);
 router.get('/dashboard', verifyToken, getDashboardMitra);
 router.get('/store-profile', verifyToken, getStoreProfile);
 router.get('/finance', verifyToken, getFinanceReport);
+
+// Wallet — saldo & penarikan dana mitra
+router.get('/wallet', verifyToken, getMitraWallet);
+router.post('/wallet/withdraw', verifyToken, requestMitraWithdrawal);
 router.get('/orders', verifyToken, getOrders);
 router.put('/products/:id', verifyToken, validateZod(updateProductSchema), updateProduct);
 

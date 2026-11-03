@@ -8,6 +8,7 @@ import {
   checkout,
   getUserOrders,
   getOrderById,
+  getOrderTracking,
   getMitraOrders,
   updateOrderStatus,
 } from '../controllers/orderController.js';
@@ -29,6 +30,7 @@ router.get('/mitra', requireRole(['mitra', 'admin']), getMitraOrders);
 
 // Detail Pesanan & Update Status
 router.get('/:id', getOrderById);
+router.get('/:id/tracking', getOrderTracking);
 router.patch('/:id/status', validateZod(updateOrderStatusSchema), updateOrderStatus);
 
 export default router;

@@ -14,7 +14,7 @@ import {
   sendError,
 } from '../utils/response.js';
 import * as paymentService from '../services/paymentService.js';
-import pusher from '../utils/pusher.js';
+import { settleOrderPaid, findTransactionByRef } from '../services/orderSettlement.js';
 
 // ------------------------------------------------------------
 // 1. Ambil Daftar Negara yang Didukung Gateway
@@ -263,55 +263,13 @@ export const checkOrderStatus = async (req: Request, res: Response): Promise<voi
 
     // Jika scbz melaporkan status 'paid', perbarui database secara otomatis
     if (liveStatus === 'paid' && order.order_status !== 'paid') {
-      await connection.beginTransaction();
-
-      await connection.query(
-        "UPDATE transactions SET status = 'success' WHERE id = ?",
-        [order.transaction_id]
-      );
-
-      await connection.query(
-        "UPDATE orders SET status = 'paid' WHERE id = ?",
-        [order.id]
-      );
-
-      // Notifikasi ke mitra & pembeli
-      await connection.query(
-        `INSERT INTO notifications (user_id, title, message, type, reference_id)
-         VALUES (?, ?, ?, 'order', ?)`,
-        [
-          order.mitra_user_id,
-          'Pembayaran Diterima!',
-          `Pesanan #${order.id} telah dibayar lunas sebesar Rp ${Number(order.total_amount).toLocaleString('id-ID')}. Segera proses pesanan ini.`,
-          order.id,
-        ]
-      );
-
-      await connection.query(
-        `INSERT INTO notifications (user_id, title, message, type, reference_id)
-         VALUES (?, ?, ?, 'order', ?)`,
-        [
-          order.user_id,
-          'Pembayaran Berhasil',
-          `Pembayaran pesanan #${order.id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
-          order.id,
-        ]
-      );
-
-      await connection.commit();
-
-      try {
-        await pusher.trigger(`user-${order.user_id}`, 'order-paid', {
-          order_id: order.id,
-          status: 'paid',
-        });
-        await pusher.trigger(`user-${order.mitra_user_id}`, 'new-paid-order', {
-          order_id: order.id,
-          status: 'paid',
-        });
-      } catch (pusherErr) {
-        // Non-blocking
-      }
+      await settleOrderPaid({
+        id: order.transaction_id,
+        order_id: order.id,
+        user_id: order.user_id,
+        mitra_user_id: order.mitra_user_id,
+        total_amount: order.total_amount,
+      });
 
       sendSuccess(res, {
         order_id: order.id,
@@ -370,71 +328,13 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
     console.log(`🔔 [Webhook Payment] Diterima: event=${event}, token=${token}, inv_id=${inv_id}, status=${status}`);
 
     if (status === 'paid' || event === 'payment.paid') {
-      // Temukan transaksi berdasarkan token atau inv_id
-      const [trxs]: any = await connection.query(
-        `SELECT t.id, t.status, o.id AS order_id, o.user_id, o.mitra_id, o.total_amount,
-                m.user_id AS mitra_user_id
-         FROM transactions t
-         JOIN orders o ON o.transaction_id = t.id
-         JOIN mitra_profiles m ON o.mitra_id = m.id
-         WHERE t.inv_id = ? OR t.payment_token = ?
-         LIMIT 1`,
-        [inv_id || '', token || '']
-      );
-
-      if (trxs.length > 0) {
-        const trx = trxs[0];
-
-        if (trx.status !== 'success') {
-          await connection.beginTransaction();
-
-          await connection.query(
-            "UPDATE transactions SET status = 'success' WHERE id = ?",
-            [trx.id]
-          );
-
-          await connection.query(
-            "UPDATE orders SET status = 'paid' WHERE id = ?",
-            [trx.order_id]
-          );
-
-          // Notifikasi sistem
-          await connection.query(
-            `INSERT INTO notifications (user_id, title, message, type, reference_id)
-             VALUES (?, ?, ?, 'order', ?)`,
-            [
-              trx.mitra_user_id,
-              'Pembayaran Diterima!',
-              `Pesanan #${trx.order_id} telah dibayar lunas sebesar Rp ${Number(trx.total_amount).toLocaleString('id-ID')}.`,
-              trx.order_id,
-            ]
-          );
-
-          await connection.query(
-            `INSERT INTO notifications (user_id, title, message, type, reference_id)
-             VALUES (?, ?, ?, 'order', ?)`,
-            [
-              trx.user_id,
-              'Pembayaran Berhasil!',
-              `Pembayaran pesanan #${trx.order_id} telah diterima. Penjual akan segera memproses pesanan Anda.`,
-              trx.order_id,
-            ]
-          );
-
-          await connection.commit();
-
-          try {
-            await pusher.trigger(`user-${trx.user_id}`, 'order-paid', {
-              order_id: trx.order_id,
-              status: 'paid',
-            });
-            await pusher.trigger(`user-${trx.mitra_user_id}`, 'new-paid-order', {
-              order_id: trx.order_id,
-              status: 'paid',
-            });
-          } catch (pErr) {}
-
-          console.log(`✅ [Webhook Payment] Pesanan #${trx.order_id} berhasil diupdate ke status 'paid'.`);
+      // Temukan transaksi berdasarkan token atau inv_id, lalu tandai lunas
+      // (idempoten — aman dipanggil ulang).
+      const trx = await findTransactionByRef(inv_id, token);
+      if (trx) {
+        const settled = await settleOrderPaid(trx);
+        if (settled) {
+          console.log(`✅ [Webhook Payment] Pesanan #${trx.order_id} ditandai 'paid'.`);
         }
       }
     }
@@ -455,3 +355,68 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
 export const getPaymentMethods = getMethods;
 export const createPayment = createOrderPayment;
 export const getPaymentStatus = checkOrderStatus;
+
+
+// ------------------------------------------------------------
+// 7. SIMULASI PEMBAYARAN (DEV/DEMO ONLY)
+//    Menandai pesanan lunas TANPA uang asli — untuk menguji alur
+//    checkout → saldo mitra saat presentasi. Dimatikan di production.
+// ------------------------------------------------------------
+export const simulatePayment = async (req: Request, res: Response): Promise<void> => {
+  if (process.env['NODE_ENV'] === 'production') {
+    sendForbidden(res, 'Endpoint simulasi hanya tersedia di lingkungan development.');
+    return;
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    const userId = res.locals['userId'];
+    const userRole = res.locals['role'];
+    const orderId = Number((req.params as { orderId: string }).orderId);
+
+    const [orders]: any = await connection.query(
+      `SELECT o.id, o.user_id, o.total_amount, o.status AS order_status,
+              t.id AS transaction_id, t.status AS transaction_status,
+              m.user_id AS mitra_user_id
+       FROM orders o
+       JOIN transactions t ON o.transaction_id = t.id
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       WHERE o.id = ?`,
+      [orderId]
+    );
+
+    if (orders.length === 0) {
+      sendNotFound(res, `Pesanan #${orderId} tidak ditemukan.`);
+      return;
+    }
+    const order = orders[0];
+
+    if (order.user_id !== userId && order.mitra_user_id !== userId && userRole !== 'admin') {
+      sendForbidden(res, 'Anda tidak berhak mensimulasi pembayaran pesanan ini.');
+      return;
+    }
+    if (order.order_status === 'paid' || order.transaction_status === 'success') {
+      sendBadRequest(res, 'Pesanan ini sudah lunas.');
+      return;
+    }
+
+    const settled = await settleOrderPaid({
+      id: order.transaction_id,
+      order_id: order.id,
+      user_id: order.user_id,
+      mitra_user_id: order.mitra_user_id,
+      total_amount: order.total_amount,
+    });
+
+    sendSuccess(res, {
+      order_id: order.id,
+      simulated: true,
+      settled,
+      note: 'Pembayaran disimulasikan — gunakan PATCH /api/orders/:id/status (status: completed) untuk menandai pesanan selesai sehingga masuk saldo mitra.',
+    }, 'Pembayaran (simulasi) berhasil — pesanan kini berstatus PAID.');
+  } catch (error: any) {
+    sendError(res, error.message || 'Gagal mensimulasikan pembayaran.', error.status || 500);
+  } finally {
+    connection.release();
+  }
+};
