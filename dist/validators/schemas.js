@@ -90,9 +90,12 @@ exports.loginSchema = zod_1.z.object({
 exports.googleLoginSchema = zod_1.z
     .object({
     credential: zod_1.z.string().optional(),
+    id_token: zod_1.z.string().optional(),
+    token: zod_1.z.string().optional(),
+    role: zod_1.z.enum(['pengunjung', 'mitra', 'admin']).optional(),
     userInfo: zod_1.z.record(zod_1.z.string(), zod_1.z.any()).optional(),
 })
-    .refine((data) => data.credential || data.userInfo, {
+    .refine((data) => data.credential || data.id_token || data.token || data.userInfo, {
     message: 'Data otentikasi Google wajib dikirim',
 });
 exports.forgotPasswordSchema = zod_1.z.object({

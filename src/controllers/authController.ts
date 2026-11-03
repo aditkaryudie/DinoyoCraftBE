@@ -365,9 +365,10 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
 
 export const googleLogin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { credential, userInfo } = req.body;
+    const { credential, id_token, token: tokenParam, userInfo } = req.body;
+    const tokenToVerify = credential || id_token || tokenParam;
 
-    if (!credential && !userInfo) {
+    if (!tokenToVerify && !userInfo) {
       res.status(400).json({ message: 'Data otentikasi Google wajib dikirim' });
       return;
     }
@@ -377,12 +378,20 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
     let googleId = '';
     let avatarUrl: string | null = null;
 
-    if (credential) {
+    if (tokenToVerify) {
       try {
-        const client = new OAuth2Client(process.env['GOOGLE_CLIENT_ID']);
+        const client = new OAuth2Client();
+        // Ambil semua audience yang valid (Web, Mobile, dan Legacy)
+        const validAudiences: string[] = [
+          process.env['GOOGLE_CLIENT_ID_WEB'],
+          process.env['GOOGLE_CLIENT_ID_MOBILE'],
+          process.env['GOOGLE_CLIENT_ID'],
+          process.env['GOOGLE_CLIENT_ID_ALT']
+        ].filter((id): id is string => Boolean(id && typeof id === 'string' && id.trim().length > 0));
+
         const ticket = await client.verifyIdToken({
-          idToken: credential,
-          audience: process.env['GOOGLE_CLIENT_ID'],
+          idToken: tokenToVerify,
+          audience: validAudiences.length > 0 ? validAudiences : undefined,
         });
         const payload = ticket.getPayload();
         if (payload && payload.email) {
@@ -394,7 +403,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       } catch (verifyError) {
         console.warn('Google verifyIdToken failed, attempting JWT decode fallback:', verifyError);
         try {
-          const parts = credential.split('.');
+          const parts = tokenToVerify.split('.');
           if (parts.length === 3) {
             const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
             if (decoded && decoded.email) {

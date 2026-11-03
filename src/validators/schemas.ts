@@ -100,11 +100,15 @@ export const loginSchema = z.object({
 export const googleLoginSchema = z
   .object({
     credential: z.string().optional(),
+    id_token: z.string().optional(),
+    token: z.string().optional(),
+    role: z.enum(['pengunjung', 'mitra', 'admin']).optional(),
     userInfo: z.record(z.string(), z.any()).optional(),
   })
-  .refine((data) => data.credential || data.userInfo, {
+  .refine((data) => data.credential || data.id_token || data.token || data.userInfo, {
     message: 'Data otentikasi Google wajib dikirim',
   });
+
 
 export const forgotPasswordSchema = z.object({
   email: z.string().email('Format email tidak valid'),

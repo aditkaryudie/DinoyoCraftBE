@@ -83,6 +83,13 @@ export declare const loginSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const googleLoginSchema: z.ZodObject<{
     credential: z.ZodOptional<z.ZodString>;
+    id_token: z.ZodOptional<z.ZodString>;
+    token: z.ZodOptional<z.ZodString>;
+    role: z.ZodOptional<z.ZodEnum<{
+        admin: "admin";
+        mitra: "mitra";
+        pengunjung: "pengunjung";
+    }>>;
     userInfo: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodAny>>;
 }, z.core.$strip>;
 export declare const forgotPasswordSchema: z.ZodObject<{

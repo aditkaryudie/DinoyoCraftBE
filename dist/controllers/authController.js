@@ -308,8 +308,9 @@ const loginMitra = async (req, res) => {
 exports.loginMitra = loginMitra;
 const googleLogin = async (req, res) => {
     try {
-        const { credential, userInfo } = req.body;
-        if (!credential && !userInfo) {
+        const { credential, id_token, token: tokenParam, userInfo } = req.body;
+        const tokenToVerify = credential || id_token || tokenParam;
+        if (!tokenToVerify && !userInfo) {
             res.status(400).json({ message: 'Data otentikasi Google wajib dikirim' });
             return;
         }
@@ -317,12 +318,19 @@ const googleLogin = async (req, res) => {
         let name = '';
         let googleId = '';
         let avatarUrl = null;
-        if (credential) {
+        if (tokenToVerify) {
             try {
-                const client = new google_auth_library_1.OAuth2Client(process.env['GOOGLE_CLIENT_ID']);
+                const client = new google_auth_library_1.OAuth2Client();
+                // Ambil semua audience yang valid (Web, Mobile, dan Legacy)
+                const validAudiences = [
+                    process.env['GOOGLE_CLIENT_ID_WEB'],
+                    process.env['GOOGLE_CLIENT_ID_MOBILE'],
+                    process.env['GOOGLE_CLIENT_ID'],
+                    process.env['GOOGLE_CLIENT_ID_ALT']
+                ].filter((id) => Boolean(id && typeof id === 'string' && id.trim().length > 0));
                 const ticket = await client.verifyIdToken({
-                    idToken: credential,
-                    audience: process.env['GOOGLE_CLIENT_ID'],
+                    idToken: tokenToVerify,
+                    audience: validAudiences.length > 0 ? validAudiences : undefined,
                 });
                 const payload = ticket.getPayload();
                 if (payload && payload.email) {
@@ -335,7 +343,7 @@ const googleLogin = async (req, res) => {
             catch (verifyError) {
                 console.warn('Google verifyIdToken failed, attempting JWT decode fallback:', verifyError);
                 try {
-                    const parts = credential.split('.');
+                    const parts = tokenToVerify.split('.');
                     if (parts.length === 3) {
                         const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
                         if (decoded && decoded.email) {
