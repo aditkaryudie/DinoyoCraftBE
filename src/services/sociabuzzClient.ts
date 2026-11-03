@@ -436,13 +436,19 @@ export class SociabuzzClient {
 
   /**
    * 6. Cek Status Pembayaran ke SociaBuzz
+   *
+   * PENTING: deteksi 'paid' HANYA lewat redirect URL ke /payment/success.
+   * Penyaringan teks HTML (mis. "pembayaran berhasil") TERBUKTI salah —
+   * frasa tersebut juga muncul di halaman yang BELUM dibayar (teks
+   * instruksi), sehingga pesanan bisa tercatat lunas tanpa pembayaran.
    */
   async checkPaymentStatus(
     token: string,
     paymentMethod: string,
     invId?: string
   ): Promise<'paid' | 'pending' | 'expired' | 'failed'> {
-    // Jalur 1: Cek langsung ke halaman pembayaran / token sesi (paling cepat & akurat)
+    // Jalur 1: halaman token sesi — ikuti redirect; lunas bila diarahkan
+    // ke halaman success.
     try {
       const resToken = await fetch(`${this.baseURL}/payment/x/${token}`, {
         method: 'GET',
@@ -450,25 +456,17 @@ export class SociabuzzClient {
           ...COMMON_HEADERS,
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
+        redirect: 'follow',
         signal: AbortSignal.timeout(10000),
       });
 
-      if (resToken.url.includes('/payment/success') || resToken.url.includes('order_id=')) {
-        return 'paid';
-      }
-
-      const tokenHtml = (await resToken.text()).toLowerCase();
-      if (
-        tokenHtml.includes('payment successful') ||
-        tokenHtml.includes('payment success') ||
-        tokenHtml.includes('terima kasih') ||
-        tokenHtml.includes('pembayaran berhasil')
-      ) {
+      if (resToken.url.includes('/payment/success')) {
         return 'paid';
       }
     } catch (_) {}
 
-    // Jalur 2: Cek ke endpoint status pending
+    // Jalur 2: endpoint status pending — lunas bila redirect ke success;
+    // expired bila halaman menyatakan kedaluwarsa secara eksplisit.
     try {
       const targetInvId = invId || token;
       const q = new URLSearchParams({
@@ -483,6 +481,7 @@ export class SociabuzzClient {
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           Referer: `${this.baseURL}/payment/x/${token}`,
         },
+        redirect: 'follow',
         signal: AbortSignal.timeout(10000),
       });
 
@@ -493,20 +492,11 @@ export class SociabuzzClient {
       if (res.ok) {
         const html = (await res.text()).toLowerCase();
         if (
-          html.includes('payment successful') ||
-          html.includes('payment success') ||
-          html.includes('terima kasih') ||
-          html.includes('lunas')
+          html.includes('payment expired') ||
+          html.includes('kadaluarsa') ||
+          html.includes('kedaluwarsa')
         ) {
-          return 'paid';
-        }
-
-        if (html.includes('payment expired') || html.includes('expired')) {
           return 'expired';
-        }
-
-        if (html.includes('payment failed') || html.includes('gagal')) {
-          return 'failed';
         }
       }
     } catch (_) {}
