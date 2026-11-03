@@ -521,6 +521,96 @@ export const updateOrderStatus = async (req: Request, res: Response): Promise<vo
 
 // Aliases
 // ============================================================
+// POST /api/orders/:id/cancel — Pembatalan oleh PEMILIK pesanan
+// Hanya untuk pesanan 'pending' (belum bayar). Stok dikembalikan.
+// ============================================================
+export const cancelOrderByCustomer = async (req: Request, res: Response): Promise<void> => {
+  const connection = await pool.getConnection();
+  try {
+    const userId = res.locals['userId'];
+    const role = res.locals['role'];
+    const { id } = req.params;
+
+    const [orders]: any = await connection.query(
+      `SELECT o.*, m.user_id AS mitra_user_id
+       FROM orders o
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       WHERE o.id = ?`,
+      [id]
+    );
+
+    if (orders.length === 0) {
+      sendNotFound(res, 'Pesanan tidak ditemukan.');
+      return;
+    }
+    const order = orders[0];
+
+    // Hanya pemilik pesanan (atau admin) yang boleh membatalkan.
+    if (order.user_id !== userId && role !== 'admin') {
+      sendForbidden(res, 'Hanya pemilik pesanan yang dapat membatalkannya.');
+      return;
+    }
+
+    // Belum-bayar saja — pesanan yang sudah dibayar/diproses mengikuti alur mitra.
+    if (order.status !== 'pending') {
+      sendBadRequest(
+        res,
+        `Pesanan dengan status "${order.status}" tidak dapat dibatalkan langsung. Hubungi penjual bila diperlukan.`
+      );
+      return;
+    }
+
+    await connection.beginTransaction();
+
+    // Kembalikan stok produk.
+    const [items]: any = await connection.query(
+      'SELECT product_id, quantity FROM order_items WHERE order_id = ?',
+      [id]
+    );
+    for (const item of items) {
+      await connection.query('UPDATE products SET stock = stock + ? WHERE id = ?', [
+        item.quantity,
+        item.product_id,
+      ]);
+    }
+
+    await connection.query("UPDATE orders SET status = 'cancelled' WHERE id = ?", [id]);
+    await connection.query("UPDATE transactions SET status = 'cancelled' WHERE id = ?", [
+      order.transaction_id,
+    ]);
+    await recordOrderStatusHistory(Number(id), 'cancelled', null, 'Dibatalkan oleh pembeli', connection);
+
+    await connection.query(
+      `INSERT INTO notifications (user_id, title, message, type, reference_id)
+       VALUES (?, ?, ?, 'order', ?)`,
+      [
+        order.mitra_user_id,
+        'Pesanan Dibatalkan',
+        `Pesanan #${id} dibatalkan oleh pembeli sebelum pembayaran.`,
+        id,
+      ]
+    );
+
+    await connection.commit();
+
+    try {
+      await pusher.trigger(`user-${order.mitra_user_id}`, 'order-status-changed', {
+        order_id: Number(id),
+        status: 'cancelled',
+      });
+    } catch { /* non-blocking */ }
+
+    sendSuccess(res, { order_id: Number(id), status: 'cancelled' }, 'Pesanan berhasil dibatalkan.');
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    console.error('❌ [cancelOrderByCustomer] Error:', error);
+    sendError(res, 'Gagal membatalkan pesanan.');
+  } finally {
+    connection.release();
+  }
+};
+
+// ============================================================
 // GET /api/orders/:id/tracking — Timeline pelacakan pesanan
 // ============================================================
 export const getOrderTracking = async (req: Request, res: Response): Promise<void> => {
