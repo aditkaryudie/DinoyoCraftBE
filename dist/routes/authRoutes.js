@@ -13,6 +13,8 @@ const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
 // Registrasi & Login
 router.post('/register-customer', authController_js_1.registerCustomer);
+router.post('/verify-register-otp', authController_js_1.verifyRegisterOtp);
+router.post('/resend-register-otp', authController_js_1.resendRegisterOtp);
 router.post('/register-mitra', uploadMiddleware_js_1.uploadMitraDocs, (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.registerMitraSchema), authController_js_1.registerMitra);
 router.post('/login', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.loginSchema), authController_js_1.login);
 router.post('/login-mitra', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.loginSchema), authController_js_1.loginMitra);

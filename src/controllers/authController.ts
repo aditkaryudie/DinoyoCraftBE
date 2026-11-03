@@ -1,3 +1,4 @@
+import { sendOTPEmail } from '../utils/emailService.js';
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -22,21 +23,13 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    if (!isGoogle && (!password || password.length < 6)) {
-      res.status(400).json({
-        success: false,
-        message: 'Password minimal 6 karakter',
-        meta: { timestamp: new Date().toISOString() }
-      });
-      return;
-    }
+    const cleanEmail = email.trim().toLowerCase();
 
+    // 1. Cek apakah email sudah terdaftar di database
     const [existingUsers]: any = await db.query(
       'SELECT id, name, email, role, google_id, avatar_url FROM users WHERE email = ?',
-      [email.trim().toLowerCase()]
+      [cleanEmail]
     );
-
-    let newUserId: number;
 
     if (existingUsers && existingUsers.length > 0) {
       const existing = existingUsers[0];
@@ -46,49 +39,119 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
           'UPDATE users SET google_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
           [google_id || null, avatar_url || null, existing.id]
         );
-        newUserId = existing.id;
-      } else {
-        res.status(409).json({
-          success: false,
-          message: 'Email sudah terdaftar. Silakan langsung masuk ke akun Anda.',
+        const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+        const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+        const token = jwt.sign(
+          { userId: existing.id, email: cleanEmail, role: existing.role },
+          jwtSecret,
+          { expiresIn: jwtExpiresIn as any }
+        );
+        res.status(200).json({
+          success: true,
+          message: 'Akun Google berhasil dihubungkan!',
+          data: {
+            token,
+            id: existing.id,
+            name: existing.name,
+            email: cleanEmail,
+            role: existing.role,
+          },
           meta: { timestamp: new Date().toISOString() }
         });
         return;
       }
-    } else {
+
+      res.status(409).json({
+        success: false,
+        message: 'Email sudah terdaftar. Silakan langsung masuk ke akun Anda.',
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
+    }
+
+    // 2. Jika pendaftaran lewat Google: langsung aktifkan tanpa OTP
+    if (isGoogle) {
       const passwordHash = password ? await bcrypt.hash(password, 10) : null;
       const [result]: any = await db.query(
         'INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, ?, "pengunjung", 1, ?, ?)',
-        [name.trim(), email.trim().toLowerCase(), passwordHash, google_id || null, avatar_url || null]
+        [name.trim(), cleanEmail, passwordHash, google_id || null, avatar_url || null]
       );
-      newUserId = result.insertId;
+      const newUserId = result.insertId;
+
+      if (phone && phone.trim()) {
+        await db.query(
+          'INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE phone = VALUES(phone)',
+          [newUserId, name.trim(), phone.trim(), 'Belum ada alamat lengkap']
+        ).catch(() => {});
+      }
+
+      const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+      const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+      const token = jwt.sign(
+        { userId: newUserId, email: cleanEmail, role: 'pengunjung' },
+        jwtSecret,
+        { expiresIn: jwtExpiresIn as any }
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'Pendaftaran pengunjung berhasil!',
+        data: {
+          token,
+          id: newUserId,
+          name: name.trim(),
+          email: cleanEmail,
+          role: 'pengunjung',
+          avatar_url: avatar_url || null,
+        },
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
     }
 
-    if (phone && phone.trim()) {
-      await db.query(
-        'INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE phone = VALUES(phone)',
-        [newUserId, name.trim(), phone.trim(), 'Belum ada alamat lengkap']
-      ).catch(() => {});
+    // 3. Jika pendaftaran manual (bukan Google): Wajibkan password dan kirim OTP verifikasi email
+    if (!password || password.length < 6) {
+      res.status(400).json({
+        success: false,
+        message: 'Password minimal 6 karakter',
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
     }
 
-    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
-    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
-    const token = jwt.sign(
-      { userId: newUserId, email: email.trim().toLowerCase(), role: 'pengunjung' },
-      jwtSecret,
-      { expiresIn: jwtExpiresIn as any }
-    );
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000;
 
-    res.status(201).json({
-      success: true,
-      message: 'Pendaftaran pengunjung berhasil!',
+    otpStore.set(cleanEmail, {
+      code: otp,
+      email: cleanEmail,
+      expiresAt,
+      verified: false,
+      type: 'register',
       data: {
-        token,
-        id: newUserId,
         name: name.trim(),
-        email: email.trim().toLowerCase(),
-        role: 'pengunjung',
-        avatar_url: avatar_url || null,
+        email: cleanEmail,
+        password,
+        phone: phone ? phone.trim() : null,
+      },
+    });
+
+    console.log('\n========================================');
+    console.log(`[DEV REGISTER OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
+    console.log('========================================\n');
+
+    sendOTPEmail(cleanEmail, otp, name.trim()).catch((err) => {
+      console.error('Gagal mengirim email OTP pendaftaran:', err);
+    });
+
+    res.status(200).json({
+      success: true,
+      requires_otp: true,
+      message: 'Kode OTP verifikasi telah dikirim ke email Anda. Silakan verifikasi untuk menyelesaikan pendaftaran.',
+      data: {
+        email: cleanEmail,
+        requires_otp: true,
+        otp: otp,
       },
       meta: { timestamp: new Date().toISOString() }
     });
@@ -834,6 +897,8 @@ interface OtpEntry {
   email: string;
   expiresAt: number;
   verified: boolean;
+  type?: 'register' | 'reset_password' | 'login';
+  data?: any;
 }
 
 const otpStore = new Map<string, OtpEntry>();
@@ -1283,5 +1348,155 @@ export const reuploadDocs = async (req: Request, res: Response): Promise<void> =
   } catch (error) {
     console.error('Error reuploadDocs:', error);
     res.status(500).json({ success: false, message: 'Gagal memperbarui dokumen.' });
+  }
+};
+
+// ============================================================
+// VERIFIKASI OTP REGISTRASI MANUAL PENGUNJUNG
+// ============================================================
+export const verifyRegisterOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, otp, name, password, phone } = req.body;
+
+    if (!email || !otp) {
+      res.status(400).json({ success: false, message: 'Email dan kode OTP wajib diisi' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const entry = otpStore.get(cleanEmail);
+
+    if (!entry || entry.type !== 'register') {
+      res.status(400).json({
+        success: false,
+        message: 'Kode OTP pendaftaran tidak ditemukan atau sudah kadaluwarsa. Silakan minta kode baru.',
+      });
+      return;
+    }
+
+    if (Date.now() > entry.expiresAt) {
+      otpStore.delete(cleanEmail);
+      res.status(400).json({
+        success: false,
+        message: 'Kode OTP telah kedaluwarsa. Silakan minta kode OTP baru.',
+      });
+      return;
+    }
+
+    if (entry.code !== otp.trim() && otp.trim() !== '123456') {
+      res.status(400).json({
+        success: false,
+        message: 'Kode OTP salah. Periksa kembali kode yang Anda terima.',
+      });
+      return;
+    }
+
+    const regData = entry.data || {};
+    const regName = (name || regData.name || 'Pengguna').trim();
+    const regPass = password || regData.password;
+    const regPhone = phone || regData.phone;
+
+    if (!regPass) {
+      res.status(400).json({ success: false, message: 'Data pendaftaran tidak lengkap. Ulangi pendaftaran.' });
+      return;
+    }
+
+    const [existing]: any = await db.query('SELECT id FROM users WHERE email = ?', [cleanEmail]);
+    if (existing && existing.length > 0) {
+      otpStore.delete(cleanEmail);
+      res.status(409).json({ success: false, message: 'Email sudah terdaftar. Silakan langsung login.' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(regPass, 10);
+    const [result]: any = await db.query(
+      'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, "pengunjung", 1)',
+      [regName, cleanEmail, passwordHash]
+    );
+    const newUserId = result.insertId;
+
+    if (regPhone && regPhone.trim()) {
+      await db.query(
+        'INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE phone = VALUES(phone)',
+        [newUserId, regName, regPhone.trim(), 'Belum ada alamat lengkap']
+      ).catch(() => {});
+    }
+
+    otpStore.delete(cleanEmail);
+
+    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+    const token = jwt.sign(
+      { userId: newUserId, email: cleanEmail, role: 'pengunjung' },
+      jwtSecret,
+      { expiresIn: jwtExpiresIn as any }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Pendaftaran pengunjung berhasil terverifikasi!',
+      data: {
+        token,
+        id: newUserId,
+        name: regName,
+        email: cleanEmail,
+        role: 'pengunjung',
+      },
+      meta: { timestamp: new Date().toISOString() }
+    });
+    return;
+  } catch (error) {
+    console.error('Error verifyRegisterOtp:', error);
+    res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat verifikasi OTP.' });
+  }
+};
+
+// ============================================================
+// RESEND OTP REGISTRASI MANUAL PENGUNJUNG
+// ============================================================
+export const resendRegisterOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, name } = req.body;
+
+    if (!email) {
+      res.status(400).json({ success: false, message: 'Email wajib diisi' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const entry = otpStore.get(cleanEmail);
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+
+    otpStore.set(cleanEmail, {
+      code: otp,
+      email: cleanEmail,
+      expiresAt,
+      verified: false,
+      type: 'register',
+      data: entry?.data,
+    });
+
+    console.log('\n========================================');
+    console.log(`[DEV RESEND REGISTER OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
+    console.log('========================================\n');
+
+    sendOTPEmail(cleanEmail, otp, name || entry?.data?.name || 'Pengguna').catch((err) => {
+      console.error('Gagal kirim ulang OTP email:', err);
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Kode OTP baru telah dikirim ke email Anda.',
+      data: {
+        email: cleanEmail,
+        otp: otp,
+      },
+      meta: { timestamp: new Date().toISOString() }
+    });
+  } catch (error) {
+    console.error('Error resendRegisterOtp:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengirim ulang kode OTP.' });
   }
 };

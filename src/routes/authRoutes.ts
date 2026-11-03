@@ -6,6 +6,8 @@
 import { Router } from 'express';
 import {
   registerCustomer,
+  verifyRegisterOtp,
+  resendRegisterOtp,
   registerMitra,
   login,
   loginMitra,
@@ -35,6 +37,8 @@ const router = Router();
 
 // Registrasi & Login
 router.post('/register-customer', registerCustomer);
+router.post('/verify-register-otp', verifyRegisterOtp);
+router.post('/resend-register-otp', resendRegisterOtp);
 router.post('/register-mitra', uploadMitraDocs, validateZod(registerMitraSchema), registerMitra);
 router.post('/login', validateZod(loginSchema), login);
 router.post('/login-mitra', validateZod(loginSchema), loginMitra);
