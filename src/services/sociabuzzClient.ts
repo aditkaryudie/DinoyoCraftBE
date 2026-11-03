@@ -418,6 +418,13 @@ export class SociabuzzClient {
     const qrString = data.qr_string || null;
     const invId = json.inv_id || data.id || data.inv_id || token;
 
+    const channelFee = Number(selectedMethod.total_fee || selectedMethod.fee || 0);
+    // Nominal yang DIBEBANKAN ke pembayar di QR = nilai donasi + fee channel
+    // (is_borne_fee). Terverifikasi berulang: tag 54 di dalam QR SELALU
+    // sama dengan amount + fee (field total_pay milik settings TIDAK
+    // mencantumkan fee borne), jadi dihitung eksplisit tanpa syarat.
+    const gatewayTotalPay = amount + channelFee;
+
     return {
       success: true,
       token,
@@ -427,8 +434,8 @@ export class SociabuzzClient {
       payment_url: paymentUrl,
       qr_string: qrString,
       fee: {
-        total_fee: selectedMethod.total_fee || selectedMethod.fee || 0,
-        total_pay: selectedMethod.total_pay || amount,
+        total_fee: channelFee,
+        total_pay: gatewayTotalPay,
       },
       payment_status: 'pending',
     };

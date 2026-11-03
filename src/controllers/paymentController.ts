@@ -161,6 +161,10 @@ export const createOrderPayment = async (req: Request, res: Response): Promise<v
       ]
     );
 
+    // Nominal resmi = yang tercantum di QR/tagihan gateway
+    // (nilai pesanan + biaya layanan platform + fee channel QRIS).
+    const gatewayTotalPay = Number(paymentResult.fee?.total_pay || totalAmountToCharge);
+
     sendSuccess(
       res,
       {
@@ -175,9 +179,10 @@ export const createOrderPayment = async (req: Request, res: Response): Promise<v
           fixed: serviceFeeCalc.fixedFee,
           percent: serviceFeeCalc.percentFee,
         },
-        amount: totalAmountToCharge,
+        channel_fee: Number(paymentResult.fee?.total_fee || 0),
+        amount: gatewayTotalPay,
         fee: paymentResult.fee,
-        total_pay: totalAmountToCharge,
+        total_pay: gatewayTotalPay,
         payment_url: paymentResult.payment_url || null,
         qr_string: paymentResult.qr_string || null,
         token: sessionToken,
