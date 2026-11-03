@@ -361,7 +361,19 @@ const tables = [
     KEY \`idx_osh_order\` (\`order_id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
-  // 23. withdrawal_requests — pengajuan tarik saldo mitra
+  // 23. user_device_tokens — token FCM per perangkat
+  `CREATE TABLE IF NOT EXISTS \`user_device_tokens\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`fcm_token\` varchar(255) NOT NULL,
+    \`platform\` varchar(20) NOT NULL DEFAULT 'android',
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    UNIQUE KEY \`uq_fcm\` (\`fcm_token\`),
+    KEY \`idx_udt_user\` (\`user_id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // 24. withdrawal_requests — pengajuan tarik saldo mitra
   `CREATE TABLE IF NOT EXISTS \`withdrawal_requests\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
     \`user_id\` int UNSIGNED NOT NULL,
