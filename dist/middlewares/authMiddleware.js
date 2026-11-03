@@ -10,6 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAuthLocals = exports.isAdmin = exports.requireRole = exports.verifyToken = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const response_js_1 = require("../utils/response.js");
+const database_1 = __importDefault(require("../config/database"));
 const JWT_SECRET = process.env['JWT_SECRET'];
 if (!JWT_SECRET) {
     throw new Error('❌ JWT_SECRET tidak ditemukan di environment variables!');
@@ -19,7 +20,7 @@ if (!JWT_SECRET) {
  * Mengekstrak Bearer token dari header Authorization,
  * memverifikasi signature, lalu menyimpan payload ke res.locals.
  */
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
     let token;
     const authHeader = req.headers['authorization'];
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -43,6 +44,22 @@ const verifyToken = (req, res, next) => {
     }
     try {
         const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+        // Cek versi token: bila sesi dicabut dari perangkat lain (token_version
+        // dinaikkan via force-logout), semua token lama langsung ditolak.
+        const [rows] = (await database_1.default.query('SELECT token_version, is_active FROM users WHERE id = ? LIMIT 1', [decoded.userId]));
+        const dbUser = rows?.[0];
+        if (!dbUser) {
+            (0, response_js_1.sendUnauthorized)(res, 'Pengguna tidak ditemukan. Silakan login ulang.');
+            return;
+        }
+        if (dbUser.is_active === 0) {
+            (0, response_js_1.sendForbidden)(res, 'Akun Anda sedang dinonaktifkan.');
+            return;
+        }
+        if ((decoded.ver ?? 0) !== dbUser.token_version) {
+            (0, response_js_1.sendUnauthorized)(res, 'Sesi Anda telah diakhiri dari perangkat lain. Silakan login ulang.');
+            return;
+        }
         // Simpan payload ke res.locals dengan type assertion yang aman
         res.locals['userId'] = decoded.userId;
         res.locals['email'] = decoded.email;

@@ -11,6 +11,7 @@ require("dotenv/config");
 const app_js_1 = __importDefault(require("./app.js"));
 const database_js_1 = require("./config/database.js");
 const AiSetting_js_1 = __importDefault(require("./models/AiSetting.js"));
+const paymentPoller_js_1 = require("./services/paymentPoller.js");
 const PORT = process.env.PORT || 5000;
 const startServer = async () => {
     // Tes koneksi database sebelum server mulai menerima request
@@ -27,6 +28,8 @@ const startServer = async () => {
         },
     });
     console.log('✅ AI Settings table synced and ready.');
+    // Background poller pembayaran SociaBuzz (pengganti dispatcher Go scbz).
+    (0, paymentPoller_js_1.startPaymentPoller)();
     app_js_1.default.listen(Number(PORT), '0.0.0.0', () => {
         console.log('='.repeat(50));
         console.log(`🚀 DinoyoCraft API Server running`);
@@ -40,13 +43,11 @@ const startServer = async () => {
 };
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason) => {
-    console.error('🔥 Unhandled Rejection:', reason);
-    process.exit(1);
+    console.error('⚠️ Unhandled Rejection:', reason);
 });
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
-    console.error('🔥 Uncaught Exception:', err);
-    process.exit(1);
+    console.error('⚠️ Uncaught Exception:', err);
 });
 startServer().catch((err) => {
     console.error('❌ Gagal menjalankan server:', err);

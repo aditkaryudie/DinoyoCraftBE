@@ -14,4 +14,5 @@ export declare const reuploadDocs: (req: Request, res: Response) => Promise<void
 export declare const verifyRegisterOtp: (req: Request, res: Response) => Promise<void>;
 export declare const resendRegisterOtp: (req: Request, res: Response) => Promise<void>;
 export declare const checkUsername: (req: Request, res: Response) => Promise<void>;
+export declare const refreshToken: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=authController.d.ts.map

@@ -77,6 +77,24 @@ router.get('/users', adminController.getAllUsers);
  */
 router.patch('/users/:id/status', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateUserStatusSchema), adminController.updateUserStatus);
 /**
+ * @route   PATCH /api/admin/users/:id/force-logout
+ * @desc    Mengakhiri seluruh sesi pengguna di semua perangkat (token_version +1)
+ * @access  Admin only
+ */
+router.patch('/users/:id/force-logout', adminController.forceLogoutUser);
+/**
+ * @route   GET /api/admin/withdrawals?status=pending
+ * @desc    Daftar pengajuan tarik saldo mitra
+ * @access  Admin only
+ */
+router.get('/withdrawals', adminController.getWithdrawals);
+/**
+ * @route   PATCH /api/admin/withdrawals/:id
+ * @desc    Setujui / tolak pengajuan penarikan
+ * @access  Admin only
+ */
+router.patch('/withdrawals/:id', adminController.handleWithdrawalAction);
+/**
  * @route   GET /api/admin/master-data
  * @desc    Mendapatkan data master (opsional filter by category)
  * @access  Admin only

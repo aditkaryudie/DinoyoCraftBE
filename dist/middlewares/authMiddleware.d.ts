@@ -5,7 +5,7 @@ import { UserRole } from '../types/index.js';
  * Mengekstrak Bearer token dari header Authorization,
  * memverifikasi signature, lalu menyimpan payload ke res.locals.
  */
-export declare const verifyToken: (req: Request, res: Response, next: NextFunction) => void;
+export declare const verifyToken: (req: Request, res: Response, next: NextFunction) => Promise<void>;
 /**
  * requireRole
  * Middleware untuk membatasi akses berdasarkan peran (RBAC).

@@ -7,11 +7,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.verifyMitraStore = exports.getVerifikasiList = exports.createMasterData = exports.getMasterData = exports.updateUserStatus = exports.getAllUsers = exports.getDashboardStats = void 0;
+exports.handleWithdrawalAction = exports.getWithdrawals = exports.verifyMitraStore = exports.getVerifikasiList = exports.createMasterData = exports.getMasterData = exports.forceLogoutUser = exports.updateUserStatus = exports.getAllUsers = exports.getDashboardStats = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const pusher_js_1 = require("../utils/pusher.js");
 const response_js_1 = require("../utils/response.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
+const walletService_js_1 = require("../services/walletService.js");
 const sanitizeUser = (user) => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password_hash, token_version, ...safe } = user;
@@ -147,6 +148,26 @@ const updateUserStatus = async (req, res) => {
 };
 exports.updateUserStatus = updateUserStatus;
 /**
+ * PATCH /api/admin/users/:id/force-logout
+ * Menaikkan token_version → seluruh access & refresh token pengguna di
+ * SEMUA perangkat langsung tidak berlaku (sesi diakhiri paksa).
+ */
+const forceLogoutUser = async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id ?? '0');
+        const [result] = await database_js_1.default.execute('UPDATE users SET token_version = token_version + 1, updated_at = NOW() WHERE id = ?', [userId]);
+        if (result.affectedRows === 0) {
+            (0, response_js_1.sendNotFound)(res, 'Pengguna tidak ditemukan.');
+            return;
+        }
+        (0, response_js_1.sendSuccess)(res, { userId }, 'Sesi pengguna telah diakhiri dari semua perangkat.');
+    }
+    catch (err) {
+        (0, response_js_1.sendError)(res, 'Gagal mengakhiri sesi pengguna.', 500, String(err));
+    }
+};
+exports.forceLogoutUser = forceLogoutUser;
+/**
  * GET /api/admin/master-data
  */
 const getMasterData = async (req, res) => {
@@ -265,4 +286,44 @@ const verifyMitraStore = async (req, res) => {
     }
 };
 exports.verifyMitraStore = verifyMitraStore;
+// ============================================================
+// WITHDRAWAL — persetujuan tarik saldo mitra
+// ============================================================
+/**
+ * GET /api/admin/withdrawals?status=pending
+ */
+const getWithdrawals = async (req, res) => {
+    try {
+        const status = req.query['status'] || undefined;
+        const rows = await (0, walletService_js_1.adminListWithdrawals)(status, Number(req.query['limit'] || 50));
+        (0, response_js_1.sendSuccess)(res, rows, 'Daftar pengajuan penarikan berhasil diambil.');
+    }
+    catch (err) {
+        (0, response_js_1.sendError)(res, 'Gagal mengambil daftar penarikan.', 500, String(err));
+    }
+};
+exports.getWithdrawals = getWithdrawals;
+/**
+ * PATCH /api/admin/withdrawals/:id
+ * Body: { action: 'approve' | 'reject', admin_note? }
+ */
+const handleWithdrawalAction = async (req, res) => {
+    try {
+        const admin = (0, authMiddleware_js_1.getAuthLocals)(res);
+        const requestId = Number(req.params.id);
+        const { action, admin_note } = req.body;
+        if (action !== 'approve' && action !== 'reject') {
+            (0, response_js_1.sendBadRequest)(res, "Field action harus 'approve' atau 'reject'.");
+            return;
+        }
+        const result = await (0, walletService_js_1.adminHandleWithdrawal)(admin.userId, requestId, action, admin_note);
+        (0, response_js_1.sendSuccess)(res, result, action === 'approve'
+            ? 'Penarikan disetujui. Segera transfer dana ke rekening mitra.'
+            : 'Penarikan ditolak dan saldo dikembalikan.');
+    }
+    catch (err) {
+        (0, response_js_1.sendError)(res, err.message || 'Gagal memproses pengajuan.', err.status || 500);
+    }
+};
+exports.handleWithdrawalAction = handleWithdrawalAction;
 //# sourceMappingURL=adminController.js.map

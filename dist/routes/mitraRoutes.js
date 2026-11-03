@@ -21,6 +21,9 @@ router.get('/:id/public', mitraController_js_1.getPublicMitraDetail);
 router.get('/dashboard', authMiddleware_js_1.verifyToken, mitraController_js_1.getDashboardMitra);
 router.get('/store-profile', authMiddleware_js_1.verifyToken, storeController_js_1.getStoreProfile);
 router.get('/finance', authMiddleware_js_1.verifyToken, mitraController_js_1.getFinanceReport);
+// Wallet — saldo & penarikan dana mitra
+router.get('/wallet', authMiddleware_js_1.verifyToken, mitraController_js_1.getMitraWallet);
+router.post('/wallet/withdraw', authMiddleware_js_1.verifyToken, mitraController_js_1.requestMitraWithdrawal);
 router.get('/orders', authMiddleware_js_1.verifyToken, mitraController_js_1.getOrders);
 router.put('/products/:id', authMiddleware_js_1.verifyToken, (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateProductSchema), mitraController_js_1.updateProduct);
 exports.default = router;

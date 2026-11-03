@@ -7,6 +7,7 @@ import 'dotenv/config';
 import app from './app.js';
 import { testConnection } from './config/database.js';
 import AiSetting from './models/AiSetting.js';
+import { startPaymentPoller } from './services/paymentPoller.js';
 
 const PORT = process.env.PORT || 5000;
 
@@ -28,6 +29,9 @@ const startServer = async (): Promise<void> => {
   });
   console.log('✅ AI Settings table synced and ready.');
 
+  // Background poller pembayaran SociaBuzz (pengganti dispatcher Go scbz).
+  startPaymentPoller();
+
   app.listen(Number(PORT), '0.0.0.0', () => {
     console.log('='.repeat(50));
     console.log(`🚀 DinoyoCraft API Server running`);
@@ -42,14 +46,12 @@ const startServer = async (): Promise<void> => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason: unknown) => {
-  console.error('🔥 Unhandled Rejection:', reason);
-  process.exit(1);
+  console.error('⚠️ Unhandled Rejection:', reason);
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err: Error) => {
-  console.error('🔥 Uncaught Exception:', err);
-  process.exit(1);
+  console.error('⚠️ Uncaught Exception:', err);
 });
 
 startServer().catch((err: unknown) => {

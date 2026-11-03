@@ -3,8 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPublicMitraDetail = exports.getPublicMitraStores = exports.updateProduct = exports.getOrders = exports.getFinanceReport = exports.getDashboardMitra = void 0;
+exports.requestMitraWithdrawal = exports.getMitraWallet = exports.getPublicMitraDetail = exports.getPublicMitraStores = exports.updateProduct = exports.getOrders = exports.getFinanceReport = exports.getDashboardMitra = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
+const walletService_js_1 = require("../services/walletService.js");
 const getDashboardMitra = async (req, res) => {
     try {
         // 1. Ambil ID user dari JWT (res.locals atau req.user)
@@ -139,12 +140,18 @@ const getFinanceReport = async (req, res) => {
                 nominal: Number(o.total_amount || 0)
             };
         });
+        // Saldo & penarikan dari wallet ledger (konsisten dengan /mitra/wallet)
+        const wallet = await (0, walletService_js_1.getWalletSummary)(mitraId);
+        const withdrawals = await (0, walletService_js_1.listWithdrawals)(mitraId, 10);
         res.json({
             success: true,
             data: {
-                saldoAktif,
-                pendapatanTertunda,
-                totalDitarik: 0,
+                saldoAktif: wallet.saldo_tersedia,
+                pendapatanTertunda: wallet.pendapatan_tertunda,
+                totalDitarik: wallet.total_ditarik,
+                minWithdrawal: wallet.min_withdrawal,
+                withdrawalFee: wallet.withdrawal_fee,
+                riwayatPenarikan: withdrawals,
                 riwayatTransaksi
             }
         });
@@ -413,4 +420,71 @@ const getPublicMitraDetail = async (req, res) => {
     }
 };
 exports.getPublicMitraDetail = getPublicMitraDetail;
+// ============================================================
+// WALLET MITRA — saldo & penarikan dana
+// ============================================================
+/**
+ * GET /api/mitra/wallet
+ * Ringkasan saldo + riwayat pengajuan penarikan.
+ */
+const getMitraWallet = async (req, res) => {
+    try {
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        if (!userId) {
+            res.status(401).json({ success: false, message: 'Autentikasi gagal.' });
+            return;
+        }
+        const [mitraRows] = await database_js_1.default.query('SELECT id, user_id, store_name FROM mitra_profiles WHERE user_id = ? LIMIT 1', [userId]);
+        if (!mitraRows || mitraRows.length === 0) {
+            res.status(404).json({ success: false, message: 'Mitra tidak ditemukan' });
+            return;
+        }
+        const summary = await (0, walletService_js_1.getWalletSummary)(mitraRows[0].id);
+        const withdrawals = await (0, walletService_js_1.listWithdrawals)(mitraRows[0].id);
+        res.json({
+            success: true,
+            message: 'Saldo berhasil diambil.',
+            data: {
+                store_name: mitraRows[0].store_name,
+                ...summary,
+                riwayat_penarikan: withdrawals,
+            },
+        });
+    }
+    catch (error) {
+        console.error('Error getMitraWallet:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengambil data saldo.' });
+    }
+};
+exports.getMitraWallet = getMitraWallet;
+/**
+ * POST /api/mitra/wallet/withdraw
+ * Body: { amount, bank_name, account_number, account_name }
+ */
+const requestMitraWithdrawal = async (req, res) => {
+    try {
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        if (!userId) {
+            res.status(401).json({ success: false, message: 'Autentikasi gagal.' });
+            return;
+        }
+        const { amount, bank_name, account_number, account_name } = req.body;
+        const result = await (0, walletService_js_1.requestWithdrawal)(userId, {
+            amount: Number(amount),
+            bank_name,
+            account_number,
+            account_name,
+        });
+        res.status(201).json({
+            success: true,
+            message: 'Penarikan berhasil diproses. Dana akan ditransfer ke rekening tujuan (1-2 hari kerja).',
+            data: result,
+        });
+    }
+    catch (error) {
+        console.error('Error requestMitraWithdrawal:', error);
+        res.status(error.status || 500).json({ success: false, message: error.message || 'Gagal mengajukan penarikan.' });
+    }
+};
+exports.requestMitraWithdrawal = requestMitraWithdrawal;
 //# sourceMappingURL=mitraController.js.map

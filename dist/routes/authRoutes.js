@@ -29,6 +29,8 @@ router.post('/google-register', (0, validatorMiddleware_js_1.validateZod)(schema
 router.post('/forgot-password', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.forgotPasswordSchema), authController_js_1.forgotPassword);
 router.post('/verify-otp', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.verifyOtpSchema), authController_js_1.verifyOtp);
 router.post('/reset-password', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.resetPasswordSchema), authController_js_1.resetPassword);
+// Refresh Token (perpanjangan sesi mobile)
+router.post('/refresh', authController_js_1.refreshToken);
 // Profil Pengguna & Dokumen
 router.get('/profile', authMiddleware_js_1.verifyToken, authController_js_1.getProfile);
 router.put('/profile', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.uploadProfileImages, (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateProfileSchema), authController_js_1.updateProfile);

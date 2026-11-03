@@ -331,6 +331,25 @@ const tables = [
     PRIMARY KEY (\`id\`),
     KEY \`idx_notifications_user\` (\`user_id\`),
     CONSTRAINT \`fk_notifications_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    // 22. withdrawal_requests — pengajuan tarik saldo mitra
+    `CREATE TABLE IF NOT EXISTS \`withdrawal_requests\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`mitra_id\` int UNSIGNED NOT NULL,
+    \`amount\` bigint NOT NULL,
+    \`fee\` bigint NOT NULL DEFAULT 0,
+    \`bank_name\` varchar(100) NOT NULL,
+    \`account_number\` varchar(50) NOT NULL,
+    \`account_name\` varchar(100) NOT NULL,
+    \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    \`admin_note\` varchar(255) DEFAULT NULL,
+    \`processed_by\` int UNSIGNED DEFAULT NULL,
+    \`processed_at\` datetime DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_wr_user\` (\`user_id\`),
+    KEY \`idx_wr_status\` (\`status\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
 ];
 const seeds = [

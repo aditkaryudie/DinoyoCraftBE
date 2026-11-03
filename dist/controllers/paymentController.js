@@ -45,7 +45,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
 const paymentService = __importStar(require("../services/paymentService.js"));
-const pusher_js_1 = __importDefault(require("../utils/pusher.js"));
+const orderSettlement_js_1 = require("../services/orderSettlement.js");
 // ------------------------------------------------------------
 // 1. Ambil Daftar Negara yang Didukung Gateway
 // ------------------------------------------------------------
@@ -263,38 +263,13 @@ const checkOrderStatus = async (req, res) => {
         }
         // Jika scbz melaporkan status 'paid', perbarui database secara otomatis
         if (liveStatus === 'paid' && order.order_status !== 'paid') {
-            await connection.beginTransaction();
-            await connection.query("UPDATE transactions SET status = 'success' WHERE id = ?", [order.transaction_id]);
-            await connection.query("UPDATE orders SET status = 'paid' WHERE id = ?", [order.id]);
-            // Notifikasi ke mitra & pembeli
-            await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
-         VALUES (?, ?, ?, 'order', ?)`, [
-                order.mitra_user_id,
-                'Pembayaran Diterima!',
-                `Pesanan #${order.id} telah dibayar lunas sebesar Rp ${Number(order.total_amount).toLocaleString('id-ID')}. Segera proses pesanan ini.`,
-                order.id,
-            ]);
-            await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
-         VALUES (?, ?, ?, 'order', ?)`, [
-                order.user_id,
-                'Pembayaran Berhasil',
-                `Pembayaran pesanan #${order.id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
-                order.id,
-            ]);
-            await connection.commit();
-            try {
-                await pusher_js_1.default.trigger(`user-${order.user_id}`, 'order-paid', {
-                    order_id: order.id,
-                    status: 'paid',
-                });
-                await pusher_js_1.default.trigger(`user-${order.mitra_user_id}`, 'new-paid-order', {
-                    order_id: order.id,
-                    status: 'paid',
-                });
-            }
-            catch (pusherErr) {
-                // Non-blocking
-            }
+            await (0, orderSettlement_js_1.settleOrderPaid)({
+                id: order.transaction_id,
+                order_id: order.id,
+                user_id: order.user_id,
+                mitra_user_id: order.mitra_user_id,
+                total_amount: order.total_amount,
+            });
             (0, response_js_1.sendSuccess)(res, {
                 order_id: order.id,
                 transaction_status: 'success',
@@ -349,48 +324,13 @@ const handleWebhook = async (req, res) => {
         const { event, token, inv_id, status } = req.body;
         console.log(`🔔 [Webhook Payment] Diterima: event=${event}, token=${token}, inv_id=${inv_id}, status=${status}`);
         if (status === 'paid' || event === 'payment.paid') {
-            // Temukan transaksi berdasarkan token atau inv_id
-            const [trxs] = await connection.query(`SELECT t.id, t.status, o.id AS order_id, o.user_id, o.mitra_id, o.total_amount,
-                m.user_id AS mitra_user_id
-         FROM transactions t
-         JOIN orders o ON o.transaction_id = t.id
-         JOIN mitra_profiles m ON o.mitra_id = m.id
-         WHERE t.inv_id = ? OR t.payment_token = ?
-         LIMIT 1`, [inv_id || '', token || '']);
-            if (trxs.length > 0) {
-                const trx = trxs[0];
-                if (trx.status !== 'success') {
-                    await connection.beginTransaction();
-                    await connection.query("UPDATE transactions SET status = 'success' WHERE id = ?", [trx.id]);
-                    await connection.query("UPDATE orders SET status = 'paid' WHERE id = ?", [trx.order_id]);
-                    // Notifikasi sistem
-                    await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
-             VALUES (?, ?, ?, 'order', ?)`, [
-                        trx.mitra_user_id,
-                        'Pembayaran Diterima!',
-                        `Pesanan #${trx.order_id} telah dibayar lunas sebesar Rp ${Number(trx.total_amount).toLocaleString('id-ID')}.`,
-                        trx.order_id,
-                    ]);
-                    await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
-             VALUES (?, ?, ?, 'order', ?)`, [
-                        trx.user_id,
-                        'Pembayaran Berhasil!',
-                        `Pembayaran pesanan #${trx.order_id} telah diterima. Penjual akan segera memproses pesanan Anda.`,
-                        trx.order_id,
-                    ]);
-                    await connection.commit();
-                    try {
-                        await pusher_js_1.default.trigger(`user-${trx.user_id}`, 'order-paid', {
-                            order_id: trx.order_id,
-                            status: 'paid',
-                        });
-                        await pusher_js_1.default.trigger(`user-${trx.mitra_user_id}`, 'new-paid-order', {
-                            order_id: trx.order_id,
-                            status: 'paid',
-                        });
-                    }
-                    catch (pErr) { }
-                    console.log(`✅ [Webhook Payment] Pesanan #${trx.order_id} berhasil diupdate ke status 'paid'.`);
+            // Temukan transaksi berdasarkan token atau inv_id, lalu tandai lunas
+            // (idempoten — aman dipanggil ulang).
+            const trx = await (0, orderSettlement_js_1.findTransactionByRef)(inv_id, token);
+            if (trx) {
+                const settled = await (0, orderSettlement_js_1.settleOrderPaid)(trx);
+                if (settled) {
+                    console.log(`✅ [Webhook Payment] Pesanan #${trx.order_id} ditandai 'paid'.`);
                 }
             }
         }

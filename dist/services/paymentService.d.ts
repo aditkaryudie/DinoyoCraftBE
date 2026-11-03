@@ -31,31 +31,9 @@ export declare function calculatePaymentFees(country: string, amount: number, _u
         totalServiceFee: number;
         finalAmountToPay: number;
     };
-    methods: ({
-        id: number;
-        name: string;
-        label: string;
-        group: string;
-        gateway: string;
-        fee: {
-            fee_type: string;
-            fee_rate: string;
-            total_fee: number;
-            total_pay: number;
-        };
-    } | {
-        id: number;
-        name: string;
-        label: string;
-        group: string;
-        gateway: string;
-        fee: {
-            fee_rate?: undefined;
-            fee_type: string;
-            total_fee: number;
-            total_pay: number;
-        };
-    })[];
+    methods: any[];
+    live: boolean;
+    cached: boolean;
 }>;
 export declare function createDonationSession(params: {
     amount: number;
