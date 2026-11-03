@@ -1,3 +1,4 @@
+import 'dotenv/config';
 // ============================================================
 //  src/server.ts
 //  Entry point — menjalankan server HTTP

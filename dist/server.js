@@ -1,12 +1,13 @@
 "use strict";
-// ============================================================
-//  src/server.ts
-//  Entry point — menjalankan server HTTP
-// ============================================================
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+require("dotenv/config");
+// ============================================================
+//  src/server.ts
+//  Entry point — menjalankan server HTTP
+// ============================================================
 const app_js_1 = __importDefault(require("./app.js"));
 const database_js_1 = require("./config/database.js");
 const AiSetting_js_1 = __importDefault(require("./models/AiSetting.js"));

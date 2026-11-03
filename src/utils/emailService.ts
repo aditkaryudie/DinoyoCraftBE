@@ -3,17 +3,30 @@
 //  Nodemailer Email Service — Kirim OTP via Gmail SMTP
 // ============================================================
 
+import 'dotenv/config';
 import nodemailer from 'nodemailer';
 import path from 'path';
 import fs from 'fs';
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env['EMAIL_USER'],
-    pass: process.env['EMAIL_PASS'],
-  },
-});
+/**
+ * Membuat transporter Gmail SMTP secara dinamis dari environment variables
+ */
+export const getTransporter = () => {
+  const user = process.env['EMAIL_USER'];
+  const pass = process.env['EMAIL_PASS'];
+
+  if (!user || !pass) {
+    console.error('⚠️ [EMAIL CONFIG] EMAIL_USER atau EMAIL_PASS belum terdefinisi di .env!');
+  }
+
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: user || '',
+      pass: pass || '',
+    },
+  });
+};
 
 /**
  * Kirim kode OTP ke email user dengan template branded DinoyoCraft
@@ -37,7 +50,7 @@ export const sendOTPEmail = async (
     : [];
 
   const mailOptions = {
-    from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER']}>`,
+    from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER'] || 'csdinoyocraft@gmail.com'}>`,
     to: toEmail,
     subject: 'Kode OTP Verifikasi - DinoyoCraft',
     html: `
@@ -144,5 +157,12 @@ export const sendOTPEmail = async (
     attachments,
   };
 
-  await transporter.sendMail(mailOptions);
+  try {
+    const transporter = getTransporter();
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ [EMAIL SUCCESS] Kode OTP berhasil dikirim ke: ${toEmail}`);
+  } catch (error: any) {
+    console.error(`❌ [EMAIL ERROR] Gagal mengirim email OTP ke ${toEmail}:`, error.message);
+    throw error;
+  }
 };

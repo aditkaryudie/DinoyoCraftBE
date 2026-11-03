@@ -109,9 +109,13 @@ const registerCustomer = async (req, res) => {
         console.log('\n========================================');
         console.log(`[DEV REGISTER OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
         console.log('========================================\n');
-        (0, emailService_js_1.sendOTPEmail)(cleanEmail, otp, name.trim()).catch((err) => {
-            console.error('Gagal mengirim email OTP pendaftaran:', err);
-        });
+        try {
+            await (0, emailService_js_1.sendOTPEmail)(cleanEmail, otp, name.trim());
+            console.log(`✅ [OTP EMAIL] Email OTP pendaftaran berhasil terkirim ke ${cleanEmail}`);
+        }
+        catch (err) {
+            console.error('⚠️ [OTP EMAIL] Gagal mengirim email OTP pendaftaran:', err.message);
+        }
         res.status(200).json({
             success: true,
             requires_otp: true,
@@ -1256,9 +1260,13 @@ const resendRegisterOtp = async (req, res) => {
         console.log('\n========================================');
         console.log(`[DEV RESEND REGISTER OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
         console.log('========================================\n');
-        (0, emailService_js_1.sendOTPEmail)(cleanEmail, otp, name || entry?.data?.name || 'Pengguna').catch((err) => {
-            console.error('Gagal kirim ulang OTP email:', err);
-        });
+        try {
+            await (0, emailService_js_1.sendOTPEmail)(cleanEmail, otp, name || entry?.data?.name || 'Pengguna');
+            console.log(`✅ [OTP EMAIL] Email OTP resend berhasil terkirim ke ${cleanEmail}`);
+        }
+        catch (err) {
+            console.error('⚠️ [OTP EMAIL] Gagal kirim ulang OTP email:', err.message);
+        }
         res.status(200).json({
             success: true,
             message: 'Kode OTP baru telah dikirim ke email Anda.',

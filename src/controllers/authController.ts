@@ -140,9 +140,12 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
     console.log(`[DEV REGISTER OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
     console.log('========================================\n');
 
-    sendOTPEmail(cleanEmail, otp, name.trim()).catch((err) => {
-      console.error('Gagal mengirim email OTP pendaftaran:', err);
-    });
+    try {
+      await sendOTPEmail(cleanEmail, otp, name.trim());
+      console.log(`✅ [OTP EMAIL] Email OTP pendaftaran berhasil terkirim ke ${cleanEmail}`);
+    } catch (err: any) {
+      console.error('⚠️ [OTP EMAIL] Gagal mengirim email OTP pendaftaran:', err.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -1482,9 +1485,12 @@ export const resendRegisterOtp = async (req: Request, res: Response): Promise<vo
     console.log(`[DEV RESEND REGISTER OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
     console.log('========================================\n');
 
-    sendOTPEmail(cleanEmail, otp, name || entry?.data?.name || 'Pengguna').catch((err) => {
-      console.error('Gagal kirim ulang OTP email:', err);
-    });
+    try {
+      await sendOTPEmail(cleanEmail, otp, name || entry?.data?.name || 'Pengguna');
+      console.log(`✅ [OTP EMAIL] Email OTP resend berhasil terkirim ke ${cleanEmail}`);
+    } catch (err: any) {
+      console.error('⚠️ [OTP EMAIL] Gagal kirim ulang OTP email:', err.message);
+    }
 
     res.status(200).json({
       success: true,

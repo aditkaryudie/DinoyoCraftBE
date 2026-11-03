@@ -7,17 +7,29 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendOTPEmail = void 0;
+exports.sendOTPEmail = exports.getTransporter = void 0;
+require("dotenv/config");
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
-const transporter = nodemailer_1.default.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env['EMAIL_USER'],
-        pass: process.env['EMAIL_PASS'],
-    },
-});
+/**
+ * Membuat transporter Gmail SMTP secara dinamis dari environment variables
+ */
+const getTransporter = () => {
+    const user = process.env['EMAIL_USER'];
+    const pass = process.env['EMAIL_PASS'];
+    if (!user || !pass) {
+        console.error('⚠️ [EMAIL CONFIG] EMAIL_USER atau EMAIL_PASS belum terdefinisi di .env!');
+    }
+    return nodemailer_1.default.createTransport({
+        service: 'gmail',
+        auth: {
+            user: user || '',
+            pass: pass || '',
+        },
+    });
+};
+exports.getTransporter = getTransporter;
 /**
  * Kirim kode OTP ke email user dengan template branded DinoyoCraft
  */
@@ -34,7 +46,7 @@ const sendOTPEmail = async (toEmail, otpCode, recipientName = 'Pengguna') => {
         ]
         : [];
     const mailOptions = {
-        from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER']}>`,
+        from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER'] || 'csdinoyocraft@gmail.com'}>`,
         to: toEmail,
         subject: 'Kode OTP Verifikasi - DinoyoCraft',
         html: `
@@ -139,7 +151,15 @@ const sendOTPEmail = async (toEmail, otpCode, recipientName = 'Pengguna') => {
     `,
         attachments,
     };
-    await transporter.sendMail(mailOptions);
+    try {
+        const transporter = (0, exports.getTransporter)();
+        await transporter.sendMail(mailOptions);
+        console.log(`✅ [EMAIL SUCCESS] Kode OTP berhasil dikirim ke: ${toEmail}`);
+    }
+    catch (error) {
+        console.error(`❌ [EMAIL ERROR] Gagal mengirim email OTP ke ${toEmail}:`, error.message);
+        throw error;
+    }
 };
 exports.sendOTPEmail = sendOTPEmail;
 //# sourceMappingURL=emailService.js.map

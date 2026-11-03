@@ -1,3 +1,4 @@
+import 'dotenv/config';
 // ============================================================
 //  src/app.ts
 //  Konfigurasi Express Application & Global Middleware
