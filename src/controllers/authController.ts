@@ -795,7 +795,8 @@ export const getProfile = async (_req: Request, res: Response) => {
     if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const [rows]: any = await db.query(
-      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+      `SELECT u.id, u.name, u.username, u.email, u.role, u.avatar_url,
+              u.phone, u.birth_date, u.gender,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
               m.banner_url, m.is_verified, m.rejection_reason,
@@ -835,15 +836,47 @@ export const updateProfile = async (req: Request, res: Response) => {
 
     const avatarPath = files?.['avatar']?.[0] ? `/uploads/${files['avatar'][0].filename}` : null;
     const bannerPath = files?.['banner']?.[0] ? `/uploads/${files['banner'][0].filename}` : null;
+    const birthDate = req.body.birthDate ?? req.body.birth_date ?? null;
+    const gender = req.body.gender ?? null;
 
-    // Update nama & avatar_url di tabel users
+    // Update data akun di tabel users (semua role)
     await db.query(
       `UPDATE users 
        SET name = COALESCE(?, name), 
-           avatar_url = COALESCE(?, avatar_url) 
+           avatar_url = COALESCE(?, avatar_url),
+           phone = COALESCE(?, phone),
+           birth_date = COALESCE(?, birth_date),
+           gender = COALESCE(?, gender)
        WHERE id = ?`,
-      [ownerName ?? null, avatarPath, userId]
+      [
+        ownerName ?? null,
+        avatarPath,
+        phone ?? null,
+        birthDate ? String(birthDate).slice(0, 10) : null,
+        ['L', 'P'].includes(gender) ? gender : null,
+        userId
+      ]
     );
+
+    const [roleRows]: any = await db.query('SELECT role FROM users WHERE id = ?', [userId]);
+    const userRole = roleRows?.[0]?.role;
+
+    // Perilaku mitra: profil toko ikut diperbarui. Customer (pengunjung)
+    // TIDAK boleh membuat baris mitra_profiles palsu.
+    if (userRole === 'pengunjung') {
+      const [rows2]: any = await db.query(
+        `SELECT u.id, u.name, u.username, u.email, u.role, u.avatar_url,
+                u.phone, u.birth_date, u.gender
+         FROM users u WHERE u.id = ?`,
+        [userId]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Profil berhasil diperbarui',
+        data: rows2 && rows2.length > 0 ? rows2[0] : null
+      });
+    }
 
     // Periksa apakah profil mitra sudah ada di tabel mitra_profiles
     const [checkProfile]: any = await db.query('SELECT id FROM mitra_profiles WHERE user_id = ?', [userId]);
@@ -895,7 +928,8 @@ export const updateProfile = async (req: Request, res: Response) => {
 
     // Ambil data profil terbaru
     const [rows]: any = await db.query(
-      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+      `SELECT u.id, u.name, u.username, u.email, u.role, u.avatar_url,
+              u.phone, u.birth_date, u.gender,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
               m.banner_url, m.is_verified
