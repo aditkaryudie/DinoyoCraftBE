@@ -7,6 +7,7 @@ import { Router } from 'express';
 import {
   registerCustomer,
   registerMitra,
+  login,
   loginMitra,
   googleLogin,
   getProfile,
@@ -35,9 +36,13 @@ const router = Router();
 // Registrasi & Login
 router.post('/register-customer', registerCustomer);
 router.post('/register-mitra', uploadMitraDocs, validateZod(registerMitraSchema), registerMitra);
-router.post('/login', validateZod(loginSchema), loginMitra);
+router.post('/login', validateZod(loginSchema), login);
 router.post('/login-mitra', validateZod(loginSchema), loginMitra);
 router.post('/google-login', validateZod(googleLoginSchema), googleLogin);
+router.post('/google-register', validateZod(googleLoginSchema), (req, _res, next) => {
+  req.body.is_register = true;
+  next();
+}, googleLogin);
 
 // Lupa Kata Sandi & OTP
 router.post('/forgot-password', validateZod(forgotPasswordSchema), forgotPassword);

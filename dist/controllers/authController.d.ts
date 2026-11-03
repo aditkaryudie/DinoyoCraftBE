@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 export declare const registerCustomer: (req: Request, res: Response) => Promise<void>;
 export declare const saveFcmToken: (req: Request, res: Response) => Promise<void>;
 export declare const registerMitra: (req: Request, res: Response) => Promise<void>;
+export declare const login: (req: Request, res: Response) => Promise<void>;
 export declare const loginMitra: (req: Request, res: Response) => Promise<void>;
 export declare const googleLogin: (req: Request, res: Response) => Promise<void>;
 export declare const getProfile: (_req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;

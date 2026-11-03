@@ -10,18 +10,19 @@ import fs from 'fs';
 
 export const registerCustomer = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password, phone } = req.body;
+    const { name, email, password, phone, google_id, avatar_url, isGoogleAuth } = req.body;
+    const isGoogle = Boolean(isGoogleAuth || google_id);
 
-    if (!name || !email || !password) {
+    if (!name || !email) {
       res.status(400).json({
         success: false,
-        message: 'Nama, email, dan password wajib diisi',
+        message: 'Nama dan email wajib diisi',
         meta: { timestamp: new Date().toISOString() }
       });
       return;
     }
 
-    if (password.length < 6) {
+    if (!isGoogle && (!password || password.length < 6)) {
       res.status(400).json({
         success: false,
         message: 'Password minimal 6 karakter',
@@ -30,27 +31,42 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const [existingUsers]: any = await db.query('SELECT id FROM users WHERE email = ?', [email.trim().toLowerCase()]);
-    if (existingUsers && existingUsers.length > 0) {
-      res.status(409).json({
-        success: false,
-        message: 'Email sudah terdaftar. Silakan login atau gunakan email lain.',
-        meta: { timestamp: new Date().toISOString() }
-      });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const [result]: any = await db.query(
-      'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, "pengunjung", 1)',
-      [name.trim(), email.trim().toLowerCase(), passwordHash]
+    const [existingUsers]: any = await db.query(
+      'SELECT id, name, email, role, google_id, avatar_url FROM users WHERE email = ?',
+      [email.trim().toLowerCase()]
     );
 
-    const newUserId = result.insertId;
+    let newUserId: number;
+
+    if (existingUsers && existingUsers.length > 0) {
+      const existing = existingUsers[0];
+      if (isGoogle && !existing.google_id) {
+        // Tautkan akun Google ke pengguna yang sudah terdaftar
+        await db.query(
+          'UPDATE users SET google_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
+          [google_id || null, avatar_url || null, existing.id]
+        );
+        newUserId = existing.id;
+      } else {
+        res.status(409).json({
+          success: false,
+          message: 'Email sudah terdaftar. Silakan langsung masuk ke akun Anda.',
+          meta: { timestamp: new Date().toISOString() }
+        });
+        return;
+      }
+    } else {
+      const passwordHash = password ? await bcrypt.hash(password, 10) : null;
+      const [result]: any = await db.query(
+        'INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, ?, "pengunjung", 1, ?, ?)',
+        [name.trim(), email.trim().toLowerCase(), passwordHash, google_id || null, avatar_url || null]
+      );
+      newUserId = result.insertId;
+    }
 
     if (phone && phone.trim()) {
       await db.query(
-        'INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1)',
+        'INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE phone = VALUES(phone)',
         [newUserId, name.trim(), phone.trim(), 'Belum ada alamat lengkap']
       ).catch(() => {});
     }
@@ -72,9 +88,11 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
         name: name.trim(),
         email: email.trim().toLowerCase(),
         role: 'pengunjung',
+        avatar_url: avatar_url || null,
       },
       meta: { timestamp: new Date().toISOString() }
     });
+    return;
   } catch (error) {
     console.error('Error register customer:', error);
     res.status(500).json({
@@ -246,6 +264,114 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+// Login umum yang mendukung peran pengunjung, mitra, dan admin
+export const login = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      res.status(400).json({
+        success: false,
+        message: 'Email dan password wajib diisi',
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
+    }
+
+    const query = `
+      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, u.avatar_url,
+             m.store_name, m.is_verified, m.rejection_reason
+      FROM users u 
+      LEFT JOIN mitra_profiles m ON u.id = m.user_id 
+      WHERE u.email = ?
+      LIMIT 1
+    `;
+    const [users]: any = await db.query(query, [email.trim().toLowerCase()]);
+
+    if (users.length === 0) {
+      res.status(401).json({
+        success: false,
+        message: 'Email atau password salah',
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
+    }
+
+    const user = users[0];
+
+    if (user.is_active === 0) {
+      res.status(403).json({
+        success: false,
+        message: 'Akun Anda sedang dinonaktifkan.',
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
+    }
+
+    if (!user.password_hash) {
+      res.status(400).json({
+        success: false,
+        message: 'Akun ini terdaftar melalui Google. Silakan masuk menggunakan Google.',
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      res.status(401).json({
+        success: false,
+        message: 'Email atau password salah!',
+        meta: { timestamp: new Date().toISOString() }
+      });
+      return;
+    }
+
+    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+    const token = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      jwtSecret,
+      { expiresIn: jwtExpiresIn as any }
+    );
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60 * 1000
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Login berhasil!',
+      data: {
+        token: token,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        avatar_url: user.avatar_url,
+        store_name: user.store_name,
+        is_verified: user.is_verified,
+        rejection_reason: user.rejection_reason
+      },
+      meta: {
+        timestamp: new Date().toISOString()
+      }
+    });
+    return;
+  } catch (error) {
+    console.error('Error login:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan pada server.',
+      meta: { timestamp: new Date().toISOString() }
+    });
+    return;
+  }
+};
+
 export const loginMitra = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
@@ -266,7 +392,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE u.email = ?
     `;
-    const [users]: any = await db.query(query, [email]);
+    const [users]: any = await db.query(query, [email.trim().toLowerCase()]);
 
     if (users.length === 0) {
       res.status(401).json({
@@ -297,8 +423,6 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    // Mitra belum terverifikasi / ditolak tetap diizinkan login
-
     if (!user.password_hash) {
       res.status(400).json({
         success: false,
@@ -312,7 +436,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     if (!isMatch) {
       res.status(401).json({
         success: false,
-        message: "Email atau password salah!",
+        message: 'Email atau password salah!',
         meta: { timestamp: new Date().toISOString() }
       });
       return;
@@ -329,13 +453,13 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax', // Ubah dari 'strict' menjadi 'lax'
-      maxAge: 24 * 60 * 60 * 1000 // 1 hari
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60 * 1000
     });
 
     res.status(200).json({
       success: true,
-      message: "Login berhasil!",
+      message: 'Login berhasil!',
       data: {
         token: token,
         id: user.id,
@@ -351,12 +475,11 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
       }
     });
     return;
-
   } catch (error) {
     console.error('Error login mitra:', error);
     res.status(500).json({
       success: false,
-      message: "Terjadi kesalahan pada server.",
+      message: 'Terjadi kesalahan pada server.',
       meta: { timestamp: new Date().toISOString() }
     });
     return;
@@ -365,11 +488,11 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
 
 export const googleLogin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { credential, id_token, token: tokenParam, userInfo } = req.body;
+    const { credential, id_token, token: tokenParam, userInfo, is_register, action, role = 'pengunjung', phone } = req.body;
     const tokenToVerify = credential || id_token || tokenParam;
 
     if (!tokenToVerify && !userInfo) {
-      res.status(400).json({ message: 'Data otentikasi Google wajib dikirim' });
+      res.status(400).json({ success: false, message: 'Data otentikasi Google wajib dikirim' });
       return;
     }
 
@@ -381,7 +504,6 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
     if (tokenToVerify) {
       try {
         const client = new OAuth2Client();
-        // Ambil semua audience yang valid (Web, Mobile, dan Legacy)
         const validAudiences: string[] = [
           process.env['GOOGLE_CLIENT_ID_WEB'],
           process.env['GOOGLE_CLIENT_ID_MOBILE'],
@@ -425,7 +547,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
     }
 
     if (!email) {
-      res.status(400).json({ message: 'Gagal mendapatkan data akun dari Google' });
+      res.status(400).json({ success: false, message: 'Gagal mendapatkan data akun dari Google' });
       return;
     }
 
@@ -437,7 +559,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       WHERE (u.google_id IS NOT NULL AND u.google_id = ?) OR u.email = ?
       LIMIT 1
     `;
-    const [users]: any = await db.query(query, [googleId || 'NON_EXISTENT_ID', email]);
+    const [users]: any = await db.query(query, [googleId || 'NON_EXISTENT_ID', email.trim().toLowerCase()]);
 
     let user;
 
@@ -445,12 +567,12 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       user = users[0];
 
       if (user.is_active === 0) {
-        res.status(403).json({ message: 'Akun Anda sedang dinonaktifkan.' });
+        res.status(403).json({ success: false, message: 'Akun Anda sedang dinonaktifkan.' });
         return;
       }
 
       if (user.role !== 'mitra' && user.role !== 'admin' && user.role !== 'pengunjung') {
-        res.status(403).json({ message: 'Akses ditolak. Peran pengguna tidak diizinkan.' });
+        res.status(403).json({ success: false, message: 'Akses ditolak. Peran pengguna tidak diizinkan.' });
         return;
       }
 
@@ -461,14 +583,35 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
         );
       }
     } else {
+      // Akun Google BELUM terdaftar di database
+      const isRegisterIntent = Boolean(is_register === true || action === 'register');
+
+      if (!isRegisterIntent) {
+        // Alur Login: JANGAN buat akun otomatis. Berikan sinyal 404 & is_registered: false
+        res.status(404).json({
+          success: false,
+          is_registered: false,
+          message: 'Akun Google belum terdaftar. Silakan lakukan pendaftaran terlebih dahulu.',
+          data: {
+            email: email.trim().toLowerCase(),
+            name,
+            avatar_url: avatarUrl,
+            google_id: googleId,
+          },
+          meta: { timestamp: new Date().toISOString() }
+        });
+        return;
+      }
+
+      // Alur Register: Daftarkan pengguna baru dengan aman
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
 
-        const targetRole = (req.body.role === 'pengunjung') ? 'pengunjung' : 'mitra';
+        const targetRole = (role === 'pengunjung') ? 'pengunjung' : 'mitra';
         const [insertUser]: any = await connection.query(
           'INSERT INTO users (name, email, password_hash, role, is_active, google_id, avatar_url) VALUES (?, ?, NULL, ?, 1, ?, ?)',
-          [name, email, targetRole, googleId || null, avatarUrl || null]
+          [name, email.trim().toLowerCase(), targetRole, googleId || null, avatarUrl || null]
         );
         const newUserId = insertUser.insertId;
 
@@ -479,7 +622,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)`,
             [
               newUserId,
-              '-',
+              phone ? phone.trim() : '-',
               'Toko ' + name,
               '-',
               new Date().getFullYear(),
@@ -488,6 +631,11 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
               '[]'
             ]
           );
+        } else if (phone && phone.trim()) {
+          await connection.query(
+            'INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default) VALUES (?, ?, ?, ?, 1)',
+            [newUserId, name, phone.trim(), 'Belum ada alamat lengkap']
+          ).catch(() => {});
         }
 
         await connection.commit();
@@ -495,7 +643,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
         user = {
           id: newUserId,
           name,
-          email,
+          email: email.trim().toLowerCase(),
           role: targetRole,
           store_name: targetRole === 'mitra' ? ('Toko ' + name) : undefined,
           is_verified: targetRole === 'mitra' ? 0 : 1,
@@ -508,8 +656,6 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
         connection.release();
       }
     }
-
-    // Mitra belum terverifikasi / ditolak Google login diizinkan
 
     const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
     const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
@@ -528,7 +674,8 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
 
     res.status(200).json({
       success: true,
-      message: 'Login dengan Google berhasil!',
+      is_registered: true,
+      message: users.length > 0 ? 'Login dengan Google berhasil!' : 'Pendaftaran dengan Google berhasil!',
       token,
       data: {
         token,
@@ -540,13 +687,14 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
         is_verified: user.is_verified,
         rejection_reason: user.rejection_reason,
         avatar_url: user.avatar_url || avatarUrl
-      }
+      },
+      meta: { timestamp: new Date().toISOString() }
     });
     return;
 
   } catch (error) {
     console.error('Error google login:', error);
-    res.status(500).json({ message: 'Terjadi kesalahan pada server saat login dengan Google' });
+    res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat otentikasi Google' });
     return;
   }
 };

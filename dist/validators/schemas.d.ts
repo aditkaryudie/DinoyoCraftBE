@@ -91,6 +91,9 @@ export declare const googleLoginSchema: z.ZodObject<{
         pengunjung: "pengunjung";
     }>>;
     userInfo: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodAny>>;
+    is_register: z.ZodOptional<z.ZodBoolean>;
+    action: z.ZodOptional<z.ZodString>;
+    phone: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const forgotPasswordSchema: z.ZodObject<{
     email: z.ZodString;

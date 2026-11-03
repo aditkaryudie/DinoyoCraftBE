@@ -104,6 +104,9 @@ export const googleLoginSchema = z
     token: z.string().optional(),
     role: z.enum(['pengunjung', 'mitra', 'admin']).optional(),
     userInfo: z.record(z.string(), z.any()).optional(),
+    is_register: z.boolean().optional(),
+    action: z.string().optional(),
+    phone: z.string().optional(),
   })
   .refine((data) => data.credential || data.id_token || data.token || data.userInfo, {
     message: 'Data otentikasi Google wajib dikirim',

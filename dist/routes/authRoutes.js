@@ -14,9 +14,13 @@ const router = (0, express_1.Router)();
 // Registrasi & Login
 router.post('/register-customer', authController_js_1.registerCustomer);
 router.post('/register-mitra', uploadMiddleware_js_1.uploadMitraDocs, (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.registerMitraSchema), authController_js_1.registerMitra);
-router.post('/login', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.loginSchema), authController_js_1.loginMitra);
+router.post('/login', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.loginSchema), authController_js_1.login);
 router.post('/login-mitra', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.loginSchema), authController_js_1.loginMitra);
 router.post('/google-login', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.googleLoginSchema), authController_js_1.googleLogin);
+router.post('/google-register', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.googleLoginSchema), (req, _res, next) => {
+    req.body.is_register = true;
+    next();
+}, authController_js_1.googleLogin);
 // Lupa Kata Sandi & OTP
 router.post('/forgot-password', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.forgotPasswordSchema), authController_js_1.forgotPassword);
 router.post('/verify-otp', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.verifyOtpSchema), authController_js_1.verifyOtp);
