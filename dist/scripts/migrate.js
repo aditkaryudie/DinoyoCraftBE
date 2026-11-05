@@ -332,7 +332,29 @@ const tables = [
     KEY \`idx_notifications_user\` (\`user_id\`),
     CONSTRAINT \`fk_notifications_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-    // 22. withdrawal_requests — pengajuan tarik saldo mitra
+    // 22. order_status_history — timeline pelacakan pesanan
+    `CREATE TABLE IF NOT EXISTS \`order_status_history\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`order_id\` int UNSIGNED NOT NULL,
+    \`status\` varchar(30) NOT NULL,
+    \`tracking_number\` varchar(100) DEFAULT NULL,
+    \`note\` varchar(255) DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    KEY \`idx_osh_order\` (\`order_id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    // 23. user_device_tokens — token FCM per perangkat
+    `CREATE TABLE IF NOT EXISTS \`user_device_tokens\` (
+    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`user_id\` int UNSIGNED NOT NULL,
+    \`fcm_token\` varchar(255) NOT NULL,
+    \`platform\` varchar(20) NOT NULL DEFAULT 'android',
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`),
+    UNIQUE KEY \`uq_fcm\` (\`fcm_token\`),
+    KEY \`idx_udt_user\` (\`user_id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    // 24. withdrawal_requests — pengajuan tarik saldo mitra
     `CREATE TABLE IF NOT EXISTS \`withdrawal_requests\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
     \`user_id\` int UNSIGNED NOT NULL,
@@ -416,6 +438,9 @@ const runMigration = async () => {
         await ensureColumn('transactions', 'payment_url', 'VARCHAR(500) NULL AFTER inv_id');
         await ensureColumn('transactions', 'qr_string', 'TEXT NULL AFTER payment_url');
         await ensureColumn('transactions', 'gateway_fee', 'DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER qr_string');
+        await ensureColumn('users', 'phone', "VARCHAR(20) NULL AFTER email");
+        await ensureColumn('users', 'birth_date', 'DATE NULL AFTER phone');
+        await ensureColumn('users', 'gender', "ENUM('L','P') NULL AFTER birth_date");
         await ensureColumn('order_items', 'variant', 'VARCHAR(100) NULL AFTER product_id');
         // Kolom type notifikasi fleksibel (DB lama sempat berupa ENUM yang menolak
         // nilai baru seperti 'withdrawal').

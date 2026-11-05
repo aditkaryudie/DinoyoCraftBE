@@ -119,6 +119,9 @@ exports.updateProfileSchema = zod_1.z.object({
     storeName: zod_1.z.string().optional(),
     nama_toko: zod_1.z.string().optional(),
     phone: zod_1.z.string().optional(),
+    birthDate: zod_1.z.union([zod_1.z.string(), zod_1.z.date()]).optional(),
+    birth_date: zod_1.z.union([zod_1.z.string(), zod_1.z.date()]).optional(),
+    gender: zod_1.z.enum(['L', 'P']).optional(),
     whatsapp_number: zod_1.z.string().optional(),
     address: zod_1.z.string().optional(),
     alamat: zod_1.z.string().optional(),
@@ -134,12 +137,32 @@ exports.updateProfileSchema = zod_1.z.object({
 // ============================================================
 // 6. Skema Katalog Produk (Products)
 // ============================================================
+const parseCategoryInput = (val) => {
+    if (typeof val === 'number')
+        return val;
+    if (typeof val === 'string') {
+        const parsed = parseInt(val, 10);
+        if (!isNaN(parsed) && parsed > 0)
+            return parsed;
+        const lower = val.toLowerCase().trim();
+        if (lower.includes('dekorasi'))
+            return 1;
+        if (lower.includes('makan') || lower.includes('piring') || lower.includes('cangkir') || lower.includes('mangkok'))
+            return 2;
+        if (lower.includes('souvenir'))
+            return 3;
+        if (lower.includes('pot'))
+            return 4;
+        return 1;
+    }
+    return 1;
+};
 exports.createProductSchema = zod_1.z.object({
     name: zod_1.z.string().min(2, 'Nama produk minimal 2 karakter').max(200),
     description: zod_1.z.string().optional().nullable(),
     price: zod_1.z.coerce.number().min(0, 'Harga produk tidak boleh negatif'),
     stock: zod_1.z.coerce.number().int().min(0, 'Stok produk tidak boleh negatif'),
-    category_id: zod_1.z.coerce.number().int().positive('Kategori produk wajib diisi'),
+    category_id: zod_1.z.preprocess(parseCategoryInput, zod_1.z.number().int().positive('Kategori produk wajib diisi')),
     weight_gram: zod_1.z.coerce.number().int().min(1).default(500).optional(),
     variants: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.any())]).optional().nullable(),
 });
@@ -149,7 +172,7 @@ exports.updateProductSchema = zod_1.z.object({
     description: zod_1.z.string().optional().nullable(),
     price: zod_1.z.coerce.number().min(0).optional(),
     stock: zod_1.z.coerce.number().int().min(0).optional(),
-    category_id: zod_1.z.coerce.number().int().positive().optional(),
+    category_id: zod_1.z.preprocess((val) => (val === undefined || val === null || val === '') ? undefined : parseCategoryInput(val), zod_1.z.number().int().positive().optional()),
     weight_gram: zod_1.z.coerce.number().int().min(1).optional(),
     variants: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.any())]).optional().nullable(),
 });

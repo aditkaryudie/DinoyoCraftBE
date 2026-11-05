@@ -340,6 +340,12 @@ class SociabuzzClient {
         const paymentUrl = data.payment_link || data.redirect_url || null;
         const qrString = data.qr_string || null;
         const invId = json.inv_id || data.id || data.inv_id || token;
+        const channelFee = Number(selectedMethod.total_fee || selectedMethod.fee || 0);
+        // Nominal yang DIBEBANKAN ke pembayar di QR = nilai donasi + fee channel
+        // (is_borne_fee). Terverifikasi berulang: tag 54 di dalam QR SELALU
+        // sama dengan amount + fee (field total_pay milik settings TIDAK
+        // mencantumkan fee borne), jadi dihitung eksplisit tanpa syarat.
+        const gatewayTotalPay = amount + channelFee;
         return {
             success: true,
             token,
@@ -349,17 +355,23 @@ class SociabuzzClient {
             payment_url: paymentUrl,
             qr_string: qrString,
             fee: {
-                total_fee: selectedMethod.total_fee || selectedMethod.fee || 0,
-                total_pay: selectedMethod.total_pay || amount,
+                total_fee: channelFee,
+                total_pay: gatewayTotalPay,
             },
             payment_status: 'pending',
         };
     }
     /**
      * 6. Cek Status Pembayaran ke SociaBuzz
+     *
+     * PENTING: deteksi 'paid' HANYA lewat redirect URL ke /payment/success.
+     * Penyaringan teks HTML (mis. "pembayaran berhasil") TERBUKTI salah —
+     * frasa tersebut juga muncul di halaman yang BELUM dibayar (teks
+     * instruksi), sehingga pesanan bisa tercatat lunas tanpa pembayaran.
      */
     async checkPaymentStatus(token, paymentMethod, invId) {
-        // Jalur 1: Cek langsung ke halaman pembayaran / token sesi (paling cepat & akurat)
+        // Jalur 1: halaman token sesi — ikuti redirect; lunas bila diarahkan
+        // ke halaman success.
         try {
             const resToken = await fetch(`${this.baseURL}/payment/x/${token}`, {
                 method: 'GET',
@@ -367,21 +379,16 @@ class SociabuzzClient {
                     ...COMMON_HEADERS,
                     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 },
+                redirect: 'follow',
                 signal: AbortSignal.timeout(10000),
             });
-            if (resToken.url.includes('/payment/success') || resToken.url.includes('order_id=')) {
-                return 'paid';
-            }
-            const tokenHtml = (await resToken.text()).toLowerCase();
-            if (tokenHtml.includes('payment successful') ||
-                tokenHtml.includes('payment success') ||
-                tokenHtml.includes('terima kasih') ||
-                tokenHtml.includes('pembayaran berhasil')) {
+            if (resToken.url.includes('/payment/success')) {
                 return 'paid';
             }
         }
         catch (_) { }
-        // Jalur 2: Cek ke endpoint status pending
+        // Jalur 2: endpoint status pending — lunas bila redirect ke success;
+        // expired bila halaman menyatakan kedaluwarsa secara eksplisit.
         try {
             const targetInvId = invId || token;
             const q = new URLSearchParams({
@@ -395,6 +402,7 @@ class SociabuzzClient {
                     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                     Referer: `${this.baseURL}/payment/x/${token}`,
                 },
+                redirect: 'follow',
                 signal: AbortSignal.timeout(10000),
             });
             if (res.url.includes('/payment/success')) {
@@ -402,17 +410,10 @@ class SociabuzzClient {
             }
             if (res.ok) {
                 const html = (await res.text()).toLowerCase();
-                if (html.includes('payment successful') ||
-                    html.includes('payment success') ||
-                    html.includes('terima kasih') ||
-                    html.includes('lunas')) {
-                    return 'paid';
-                }
-                if (html.includes('payment expired') || html.includes('expired')) {
+                if (html.includes('payment expired') ||
+                    html.includes('kadaluarsa') ||
+                    html.includes('kedaluwarsa')) {
                     return 'expired';
-                }
-                if (html.includes('payment failed') || html.includes('gagal')) {
-                    return 'failed';
                 }
             }
         }

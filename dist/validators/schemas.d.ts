@@ -113,6 +113,12 @@ export declare const updateProfileSchema: z.ZodObject<{
     storeName: z.ZodOptional<z.ZodString>;
     nama_toko: z.ZodOptional<z.ZodString>;
     phone: z.ZodOptional<z.ZodString>;
+    birthDate: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodDate]>>;
+    birth_date: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodDate]>>;
+    gender: z.ZodOptional<z.ZodEnum<{
+        L: "L";
+        P: "P";
+    }>>;
     whatsapp_number: z.ZodOptional<z.ZodString>;
     address: z.ZodOptional<z.ZodString>;
     alamat: z.ZodOptional<z.ZodString>;
@@ -130,7 +136,7 @@ export declare const createProductSchema: z.ZodObject<{
     description: z.ZodNullable<z.ZodOptional<z.ZodString>>;
     price: z.ZodCoercedNumber<unknown>;
     stock: z.ZodCoercedNumber<unknown>;
-    category_id: z.ZodCoercedNumber<unknown>;
+    category_id: z.ZodPreprocess<z.ZodNumber, unknown>;
     weight_gram: z.ZodOptional<z.ZodDefault<z.ZodCoercedNumber<unknown>>>;
     variants: z.ZodNullable<z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodArray<z.ZodAny>]>>>;
 }, z.core.$strip>;
@@ -140,7 +146,7 @@ export declare const updateProductSchema: z.ZodObject<{
     description: z.ZodNullable<z.ZodOptional<z.ZodString>>;
     price: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     stock: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    category_id: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    category_id: z.ZodPreprocess<z.ZodOptional<z.ZodNumber>, unknown>;
     weight_gram: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     variants: z.ZodNullable<z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodArray<z.ZodAny>]>>>;
 }, z.core.$strip>;

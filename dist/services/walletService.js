@@ -17,6 +17,7 @@ exports.requestWithdrawal = requestWithdrawal;
 exports.adminListWithdrawals = adminListWithdrawals;
 exports.adminHandleWithdrawal = adminHandleWithdrawal;
 const database_js_1 = __importDefault(require("../config/database.js"));
+const notificationService_js_1 = require("./notificationService.js");
 const COMPLETED_STATUSES = ['completed', 'delivered', 'selesai'];
 const PENDING_EARN_STATUSES = ['paid', 'packed', 'shipped', 'processing'];
 const minWithdrawal = () => Number(process.env['MIN_WITHDRAWAL'] || 50_000);
@@ -108,6 +109,8 @@ async function requestWithdrawal(userId, params) {
             `Penarikan Rp ${amount.toLocaleString('id-ID')} ke ${params.bank_name.trim()} ${params.account_number.trim()} telah diproses. Dana akan masuk sesuai ketentuan bank (1-2 hari kerja).`,
             insertId,
         ]);
+        // Push FCM ke mitra (non-blocking).
+        void (0, notificationService_js_1.sendPushNotificationToUser)(userId, 'Penarikan Berhasil Diproses', `Penarikan Rp ${amount.toLocaleString('id-ID')} ke ${params.bank_name.trim()} ${params.account_number.trim()} telah diproses. Dana akan masuk sesuai ketentuan bank (1-2 hari kerja).`, { type: 'withdrawal', route: '/profile' });
         await connection.commit();
     }
     catch (err) {

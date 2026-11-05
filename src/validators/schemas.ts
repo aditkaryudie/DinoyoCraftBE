@@ -153,12 +153,27 @@ export const updateProfileSchema = z.object({
 // ============================================================
 // 6. Skema Katalog Produk (Products)
 // ============================================================
+const parseCategoryInput = (val: unknown) => {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+    const lower = val.toLowerCase().trim();
+    if (lower.includes('dekorasi')) return 1;
+    if (lower.includes('makan') || lower.includes('piring') || lower.includes('cangkir') || lower.includes('mangkok')) return 2;
+    if (lower.includes('souvenir')) return 3;
+    if (lower.includes('pot')) return 4;
+    return 1;
+  }
+  return 1;
+};
+
 export const createProductSchema = z.object({
   name: z.string().min(2, 'Nama produk minimal 2 karakter').max(200),
   description: z.string().optional().nullable(),
   price: z.coerce.number().min(0, 'Harga produk tidak boleh negatif'),
   stock: z.coerce.number().int().min(0, 'Stok produk tidak boleh negatif'),
-  category_id: z.coerce.number().int().positive('Kategori produk wajib diisi'),
+  category_id: z.preprocess(parseCategoryInput, z.number().int().positive('Kategori produk wajib diisi')),
   weight_gram: z.coerce.number().int().min(1).default(500).optional(),
   variants: z.union([z.string(), z.array(z.any())]).optional().nullable(),
 });
@@ -169,7 +184,7 @@ export const updateProductSchema = z.object({
   description: z.string().optional().nullable(),
   price: z.coerce.number().min(0).optional(),
   stock: z.coerce.number().int().min(0).optional(),
-  category_id: z.coerce.number().int().positive().optional(),
+  category_id: z.preprocess((val) => (val === undefined || val === null || val === '') ? undefined : parseCategoryInput(val), z.number().int().positive().optional()),
   weight_gram: z.coerce.number().int().min(1).optional(),
   variants: z.union([z.string(), z.array(z.any())]).optional().nullable(),
 });

@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.settleOrderPaid = settleOrderPaid;
 exports.findTransactionByRef = findTransactionByRef;
 const database_js_1 = __importDefault(require("../config/database.js"));
+const notificationService_js_1 = require("./notificationService.js");
 const pusher_js_1 = __importDefault(require("../utils/pusher.js"));
 /**
  * Tandai transaksi + pesanan sebagai 'paid'/'success', kirim notifikasi ke
@@ -33,6 +34,8 @@ async function settleOrderPaid(trx) {
         await connection.query("UPDATE orders SET status = 'paid' WHERE id = ?", [
             trx.order_id,
         ]);
+        // Timeline tracking: pembayaran terverifikasi
+        await connection.query('INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)', [trx.order_id, 'paid', 'Pembayaran terverifikasi']);
         const nominal = Number(trx.total_amount || 0).toLocaleString('id-ID');
         await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
        VALUES (?, ?, ?, 'order', ?)`, [
@@ -62,6 +65,9 @@ async function settleOrderPaid(trx) {
         catch {
             // Pusher gagal — non-blocking.
         }
+        // Push FCM ke perangkat mitra & pembeli (non-blocking).
+        void (0, notificationService_js_1.sendPushNotificationToUser)(trx.mitra_user_id, 'Pembayaran Diterima!', `Pesanan #${trx.order_id} telah dibayar lunas sebesar Rp ${Number(trx.total_amount || 0).toLocaleString('id-ID')}. Segera proses pesanan ini.`, { type: 'order', route: '/profile', order_id: String(trx.order_id) });
+        void (0, notificationService_js_1.sendPushNotificationToUser)(trx.user_id, 'Pembayaran Berhasil', `Pembayaran pesanan #${trx.order_id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`, { type: 'order', route: '/profile', order_id: String(trx.order_id) });
         console.log(`✅ [settleOrderPaid] Pesanan #${trx.order_id} ditandai LUNAS.`);
         return true;
     }

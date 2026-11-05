@@ -473,7 +473,7 @@ const runMigration = async () => {
     await ensureColumn('transactions', 'qr_string', 'TEXT NULL AFTER payment_url');
     await ensureColumn('transactions', 'gateway_fee', 'DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER qr_string');
 
-    await ensureColumn('users', 'phone', "VARCHAR(20) NULL AFTER username");
+    await ensureColumn('users', 'phone', "VARCHAR(20) NULL AFTER email");
     await ensureColumn('users', 'birth_date', 'DATE NULL AFTER phone');
     await ensureColumn('users', 'gender', "ENUM('L','P') NULL AFTER birth_date");
 

@@ -678,6 +678,8 @@ const getProfile = async (_req, res) => {
         if (!userId)
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         const [rows] = await database_1.default.query(`SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+              u.phone, u.birth_date, u.gender,
+              SUBSTRING_INDEX(u.email, '@', 1) AS username,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
               m.banner_url, m.is_verified, m.rejection_reason,
@@ -712,11 +714,37 @@ const updateProfile = async (req, res) => {
         const files = req.files;
         const avatarPath = files?.['avatar']?.[0] ? `/uploads/${files['avatar'][0].filename}` : null;
         const bannerPath = files?.['banner']?.[0] ? `/uploads/${files['banner'][0].filename}` : null;
-        // Update nama & avatar_url di tabel users
+        const birthDate = req.body.birthDate ?? req.body.birth_date ?? null;
+        const gender = req.body.gender ?? null;
+        // Update data akun di tabel users (semua role)
         await database_1.default.query(`UPDATE users 
        SET name = COALESCE(?, name), 
-           avatar_url = COALESCE(?, avatar_url) 
-       WHERE id = ?`, [ownerName ?? null, avatarPath, userId]);
+           avatar_url = COALESCE(?, avatar_url),
+           phone = COALESCE(?, phone),
+           birth_date = COALESCE(?, birth_date),
+           gender = COALESCE(?, gender)
+       WHERE id = ?`, [
+            ownerName ?? null,
+            avatarPath,
+            phone ?? null,
+            birthDate ? String(birthDate).slice(0, 10) : null,
+            ['L', 'P'].includes(gender) ? gender : null,
+            userId
+        ]);
+        const [roleRows] = await database_1.default.query('SELECT role FROM users WHERE id = ?', [userId]);
+        const userRole = roleRows?.[0]?.role;
+        // Perilaku mitra: profil toko ikut diperbarui. Customer (pengunjung)
+        // TIDAK boleh membuat baris mitra_profiles palsu.
+        if (userRole === 'pengunjung') {
+            const [rows2] = await database_1.default.query(`SELECT u.id, u.name, u.username, u.email, u.role, u.avatar_url,
+                u.phone, u.birth_date, u.gender
+         FROM users u WHERE u.id = ?`, [userId]);
+            return res.status(200).json({
+                success: true,
+                message: 'Profil berhasil diperbarui',
+                data: rows2 && rows2.length > 0 ? rows2[0] : null
+            });
+        }
         // Periksa apakah profil mitra sudah ada di tabel mitra_profiles
         const [checkProfile] = await database_1.default.query('SELECT id FROM mitra_profiles WHERE user_id = ?', [userId]);
         if (checkProfile && checkProfile.length > 0) {
@@ -759,7 +787,8 @@ const updateProfile = async (req, res) => {
             ]);
         }
         // Ambil data profil terbaru
-        const [rows] = await database_1.default.query(`SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+        const [rows] = await database_1.default.query(`SELECT u.id, u.name, u.username, u.email, u.role, u.avatar_url,
+              u.phone, u.birth_date, u.gender,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
               m.banner_url, m.is_verified

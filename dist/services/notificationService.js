@@ -30,7 +30,6 @@ const sendPushNotificationToUser = async (userId, title, body, dataPayload = {})
                 priority: 'high',
                 notification: {
                     sound: 'default',
-                    channelId: 'dinoyocraft_channel',
                 },
             },
         });

@@ -21,17 +21,12 @@ const app: Application = express();
 
 // -------------------------------------------------------
 // 1. CORS — Konfigurasi origin ramah Mobile & Web
+// Tambahkan ini agar aplikasi web (Chrome) diizinkan mengakses API
 // -------------------------------------------------------
 app.use(
   cors({
-    origin: (_origin, callback) => {
-      // Izinkan request tanpa origin (seperti aplikasi native Flutter, Postman, emulator)
-      // serta origin browser web frontend
-      callback(null, true);
-    },
+    origin: true,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   })
 );
 

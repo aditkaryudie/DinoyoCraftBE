@@ -19,6 +19,8 @@ router.get('/', orderController_js_1.getUserOrders);
 router.get('/mitra', (0, authMiddleware_js_1.requireRole)(['mitra', 'admin']), orderController_js_1.getMitraOrders);
 // Detail Pesanan & Update Status
 router.get('/:id', orderController_js_1.getOrderById);
+router.get('/:id/tracking', orderController_js_1.getOrderTracking);
+router.post('/:id/cancel', orderController_js_1.cancelOrderByCustomer);
 router.patch('/:id/status', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateOrderStatusSchema), orderController_js_1.updateOrderStatus);
 exports.default = router;
 //# sourceMappingURL=orderRoutes.js.map

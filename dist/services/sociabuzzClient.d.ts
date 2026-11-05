@@ -62,6 +62,11 @@ export declare class SociabuzzClient {
     createPayment(token: string, paymentMethod: string, amount: number, country: string | undefined, jar: CookieJar): Promise<any>;
     /**
      * 6. Cek Status Pembayaran ke SociaBuzz
+     *
+     * PENTING: deteksi 'paid' HANYA lewat redirect URL ke /payment/success.
+     * Penyaringan teks HTML (mis. "pembayaran berhasil") TERBUKTI salah —
+     * frasa tersebut juga muncul di halaman yang BELUM dibayar (teks
+     * instruksi), sehingga pesanan bisa tercatat lunas tanpa pembayaran.
      */
     checkPaymentStatus(token: string, paymentMethod: string, invId?: string): Promise<'paid' | 'pending' | 'expired' | 'failed'>;
     /**

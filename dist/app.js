@@ -23,16 +23,11 @@ dotenv_1.default.config();
 const app = (0, express_1.default)();
 // -------------------------------------------------------
 // 1. CORS — Konfigurasi origin ramah Mobile & Web
+// Tambahkan ini agar aplikasi web (Chrome) diizinkan mengakses API
 // -------------------------------------------------------
 app.use((0, cors_1.default)({
-    origin: (_origin, callback) => {
-        // Izinkan request tanpa origin (seperti aplikasi native Flutter, Postman, emulator)
-        // serta origin browser web frontend
-        callback(null, true);
-    },
+    origin: true,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
 // 2. Keamanan — Helmet & Rate Limiter
 app.use((0, helmet_1.default)({

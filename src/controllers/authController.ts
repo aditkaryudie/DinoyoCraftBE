@@ -795,8 +795,9 @@ export const getProfile = async (_req: Request, res: Response) => {
     if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const [rows]: any = await db.query(
-      `SELECT u.id, u.name, u.username, u.email, u.role, u.avatar_url,
+      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
               u.phone, u.birth_date, u.gender,
+              SUBSTRING_INDEX(u.email, '@', 1) AS username,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
               m.banner_url, m.is_verified, m.rejection_reason,
