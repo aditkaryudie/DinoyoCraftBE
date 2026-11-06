@@ -7,6 +7,7 @@ const express_1 = __importDefault(require("express"));
 const mitraController_js_1 = require("../controllers/mitraController.js");
 const storeController_js_1 = require("../controllers/storeController.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
+const uploadMiddleware_js_1 = __importDefault(require("../middlewares/uploadMiddleware.js"));
 const router = express_1.default.Router();
 // Route Publik Profil Toko Mitra untuk Konsumsi Mobile & Tamu
 router.get('/public', mitraController_js_1.getPublicMitraStores);
@@ -17,7 +18,10 @@ router.get('/dashboard', authMiddleware_js_1.verifyToken, mitraController_js_1.g
 router.get('/store-profile', authMiddleware_js_1.verifyToken, storeController_js_1.getStoreProfile);
 // Endpoint Manajemen Mitra
 router.get('/finance', authMiddleware_js_1.verifyToken, mitraController_js_1.getFinanceReport);
+router.post('/wallet/withdraw', authMiddleware_js_1.verifyToken, mitraController_js_1.withdrawWallet);
 router.get('/orders', authMiddleware_js_1.verifyToken, mitraController_js_1.getOrders);
-router.put('/products/:id', authMiddleware_js_1.verifyToken, mitraController_js_1.updateProduct);
+router.patch('/orders/:id/shipping', authMiddleware_js_1.verifyToken, mitraController_js_1.updateOrderShipping);
+router.post('/orders/:id/reply', authMiddleware_js_1.verifyToken, mitraController_js_1.replyOrderReview);
+router.put('/products/:id', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.default.single('image'), mitraController_js_1.updateProduct);
 exports.default = router;
 //# sourceMappingURL=mitraRoutes.js.map

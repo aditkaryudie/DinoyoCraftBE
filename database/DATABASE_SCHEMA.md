@@ -243,6 +243,7 @@ users (id)
 |------|-----------|---------|
 | `schema.sql` | DDL awal — 5 tabel wajib + seed data | Initial |
 | `migration_google_auth.sql` | Tambah kolom `google_id` & `avatar_url` ke `users`, ubah `password_hash` jadi nullable | v1.1 |
+| `migration_fix_mitra_profiles_schema.sql` | Tambah kolom `description`, `website`, `instagram`, `banner_url`, `avatar_url`, dan `rejection_reason` ke `mitra_profiles` secara idempotent | v1.2 |
 
 ---
 

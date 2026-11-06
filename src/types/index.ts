@@ -88,15 +88,39 @@ export interface UserEntity extends RowDataPacket {
   id: number;
   name: string;
   email: string;
-  password_hash: string;
+  password_hash: string | null;
   role: UserRole;
   is_active: boolean;
   token_version: number;
+  google_id?: string | null;
+  avatar_url?: string | null;
   created_at: Date;
   updated_at: Date;
 }
 
 export type SafeUser = Omit<UserEntity, 'password_hash' | 'token_version'>;
+
+export interface MitraProfileEntity extends RowDataPacket {
+  id: number;
+  user_id: number;
+  whatsapp_number: string;
+  store_name: string;
+  workshop_address: string;
+  started_year?: number | null;
+  description?: string | null;
+  website?: string | null;
+  instagram?: string | null;
+  banner_url?: string | null;
+  avatar_url?: string | null;
+  ktp_file_url: string;
+  nib_file_url: string;
+  sample_product_images: string | string[];
+  is_verified: number;
+  rejection_reason?: string | null;
+  is_active: number;
+  created_at: Date;
+  updated_at: Date;
+}
 
 export interface MasterDataEntity extends RowDataPacket {
   id: number;

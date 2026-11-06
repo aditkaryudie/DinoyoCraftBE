@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const database_1 = __importDefault(require("../config/database"));
+const MitraProfile_1 = require("../models/MitraProfile");
 const migrations = [
     // 1. Matikan pengecekan Foreign Key sementara agar tidak error urutan tabel
     "SET FOREIGN_KEY_CHECKS = 0;",
@@ -53,6 +54,7 @@ const migrations = [
     \`nib_file_url\` varchar(500) NOT NULL,
     \`sample_product_images\` json NOT NULL,
     \`is_verified\` tinyint(1) DEFAULT '0',
+    \`rejection_reason\` text DEFAULT NULL,
     \`is_active\` tinyint(1) DEFAULT '1',
     \`created_at\` datetime DEFAULT CURRENT_TIMESTAMP,
     \`updated_at\` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -297,16 +299,34 @@ const migrations = [
     // 4. Nyalakan kembali pengecekan Foreign Key
     "SET FOREIGN_KEY_CHECKS = 1;"
 ];
+const ensureUsersSchema = async () => {
+    const [existingCols] = await database_1.default.query(`SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'`);
+    const existingSet = new Set((existingCols || []).map((row) => String(row.COLUMN_NAME).toLowerCase()));
+    if (!existingSet.has('google_id')) {
+        await database_1.default.query('ALTER TABLE `users` ADD COLUMN `google_id` VARCHAR(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `token_version`');
+        console.log('✅ Kolom users.google_id berhasil ditambahkan.');
+    }
+    if (!existingSet.has('avatar_url')) {
+        await database_1.default.query('ALTER TABLE `users` ADD COLUMN `avatar_url` VARCHAR(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `google_id`');
+        console.log('✅ Kolom users.avatar_url berhasil ditambahkan.');
+    }
+};
 const runMigration = async () => {
     console.log('🚀 Memulai migrasi database DinoyoCraft...');
     try {
         for (let i = 0; i < migrations.length; i++) {
             await database_1.default.query(migrations[i]);
         }
+        await ensureUsersSchema();
+        await (0, MitraProfile_1.ensureMitraProfileSchema)();
         console.log('✅ Migrasi & Sinkronisasi Data berhasil! Database siap digunakan.');
     }
     catch (error) {
         console.error('❌ Terjadi kesalahan saat migrasi:', error);
+        process.exitCode = 1;
     }
     finally {
         process.exit();

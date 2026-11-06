@@ -34,6 +34,7 @@ router.use('/mitra', mitraRoutes_js_1.default);
 router.use('/chat', chatRoutes_js_1.default);
 router.use('/addresses', addressRoutes_js_1.default);
 router.use('/cart', cartRoutes_js_1.default);
+router.use('/carts', cartRoutes_js_1.default);
 router.use('/orders', orderRoutes_js_1.default);
 router.use('/payments', paymentRoutes_js_1.default);
 router.use('/reviews', reviewRoutes_js_1.default);

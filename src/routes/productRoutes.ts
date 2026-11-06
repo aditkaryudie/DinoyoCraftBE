@@ -19,7 +19,7 @@ router.get('/:id/public', getPublicProductDetail);
 // Route untuk produk mitra
 router.get('/', verifyToken, getProdukMitra);
 router.post('/', verifyToken, upload.single('image'), tambahProduk);
-router.put('/:id', verifyToken, updateProduct);
+router.put('/:id', verifyToken, upload.single('image'), updateProduct);
 router.delete('/:id', verifyToken, hapusProduk);
 
 export default router;

@@ -40,8 +40,8 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
 
     const passwordHash = await bcrypt.hash(password, 10);
     const [result]: any = await db.query(
-      'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, "pengunjung", 1)',
-      [name.trim(), email.trim().toLowerCase(), passwordHash]
+      'INSERT INTO users (name, email, password_hash, role, is_active, phone) VALUES (?, ?, ?, "pengunjung", 1, ?)',
+      [name.trim(), email.trim().toLowerCase(), passwordHash, phone ? phone.trim() : null]
     );
 
     const newUserId = result.insertId;
@@ -64,11 +64,13 @@ export const registerCustomer = async (req: Request, res: Response): Promise<voi
     res.status(201).json({
       success: true,
       message: 'Pendaftaran pengunjung berhasil!',
+      token,
       data: {
         token,
         id: newUserId,
         name: name.trim(),
         email: email.trim().toLowerCase(),
+        phone: phone ? phone.trim() : null,
         role: 'pengunjung',
       },
       meta: { timestamp: new Date().toISOString() }
@@ -188,7 +190,7 @@ export const registerMitra = async (req: Request, res: Response): Promise<void> 
       await connection.query(
         `UPDATE mitra_profiles SET 
          whatsapp_number = ?, store_name = ?, workshop_address = ?, started_year = ?, 
-         ktp_file_url = ?, nib_file_url = ?, sample_product_images = ?, is_verified = 0, is_active = 1
+         ktp_file_url = ?, nib_file_url = ?, sample_product_images = ?, is_verified = 0, rejection_reason = NULL, is_active = 1
          WHERE user_id = ?`,
         [
           whatsapp_number,
@@ -258,7 +260,10 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     }
 
     const query = `
-      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, 
+      SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active,
+             COALESCE(u.avatar_url, m.avatar_url) AS avatar_url,
+             COALESCE(u.phone, m.whatsapp_number) AS phone,
+             u.birth_date, u.gender,
              m.store_name, m.is_verified, m.rejection_reason FROM users u 
       LEFT JOIN mitra_profiles m ON u.id = m.user_id 
       WHERE u.email = ?
@@ -276,7 +281,7 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
 
     const user = users[0];
 
-    if (user.role !== 'mitra' && user.role !== 'admin') {
+    if (req.path === '/login-mitra' && user.role !== 'mitra' && user.role !== 'admin') {
       res.status(403).json({
         success: false,
         message: 'Akses ditolak. Akun ini bukan akun Mitra.',
@@ -333,12 +338,17 @@ export const loginMitra = async (req: Request, res: Response): Promise<void> => 
     res.status(200).json({
       success: true,
       message: "Login berhasil!",
+      token: token,
       data: {
         token: token,
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        avatar_url: user.avatar_url,
+        phone: user.phone,
+        birth_date: user.birth_date,
+        gender: user.gender,
         store_name: user.store_name,
         is_verified: user.is_verified,
         rejection_reason: user.rejection_reason
@@ -544,7 +554,9 @@ export const getProfile = async (_req: Request, res: Response) => {
     if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const [rows]: any = await db.query(
-      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+      `SELECT u.id, u.name, u.email, u.role, COALESCE(u.avatar_url, m.avatar_url) AS avatar_url,
+              COALESCE(u.phone, m.whatsapp_number) AS phone,
+              u.birth_date, u.birth_date AS birthDate, u.gender,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
               m.banner_url, m.is_verified, m.rejection_reason, m.ktp_file_url, m.nib_file_url, m.sample_product_images FROM users u
@@ -569,9 +581,11 @@ export const updateProfile = async (req: Request, res: Response) => {
     const userId = res.locals['userId'];
     if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
-    const ownerName = req.body.ownerName ?? req.body.nama;
+    const ownerName = req.body.ownerName ?? req.body.nama ?? req.body.name;
     const storeName = req.body.storeName ?? req.body.nama_toko;
     const phone = req.body.phone ?? req.body.whatsapp_number;
+    const birthDate = req.body.birthDate ?? req.body.birth_date;
+    const gender = req.body.gender;
     const address = req.body.address ?? req.body.alamat ?? req.body.workshop_address;
     const yearStarted = req.body.yearStarted ?? req.body.tahun_mulai ?? req.body.started_year;
     const description = req.body.description ?? req.body.deskripsi;
@@ -583,13 +597,16 @@ export const updateProfile = async (req: Request, res: Response) => {
     const avatarPath = files?.['avatar']?.[0] ? `/uploads/${files['avatar'][0].filename}` : null;
     const bannerPath = files?.['banner']?.[0] ? `/uploads/${files['banner'][0].filename}` : null;
 
-    // Update nama & avatar_url di tabel users
+    // Update nama, avatar_url, phone, birth_date, dan gender di tabel users
     await db.query(
       `UPDATE users 
        SET name = COALESCE(?, name), 
-           avatar_url = COALESCE(?, avatar_url) 
+           avatar_url = COALESCE(?, avatar_url),
+           phone = COALESCE(?, phone),
+           birth_date = COALESCE(?, birth_date),
+           gender = COALESCE(?, gender)
        WHERE id = ?`,
-      [ownerName ?? null, avatarPath, userId]
+      [ownerName ?? null, avatarPath, phone ?? null, birthDate ?? null, gender ?? null, userId]
     );
 
     // Periksa apakah profil mitra sudah ada di tabel mitra_profiles
@@ -606,7 +623,8 @@ export const updateProfile = async (req: Request, res: Response) => {
              description = COALESCE(?, description), 
              website = COALESCE(?, website), 
              instagram = COALESCE(?, instagram),
-             banner_url = COALESCE(?, banner_url)
+             banner_url = COALESCE(?, banner_url),
+             avatar_url = COALESCE(?, avatar_url)
          WHERE user_id = ?`,
         [
           storeName ?? null,
@@ -617,35 +635,48 @@ export const updateProfile = async (req: Request, res: Response) => {
           website ?? null,
           instagram ?? null,
           bannerPath,
+          avatarPath,
           userId
         ]
       );
-    } else {
-      // Buat baru jika belum ada
+    } else if (
+      res.locals['role'] === 'mitra' ||
+      storeName ||
+      address ||
+      description ||
+      website ||
+      instagram ||
+      bannerPath
+    ) {
+      // Buat baru jika belum ada (dengan fallback aman untuk kolom NOT NULL)
       await db.query(
         `INSERT INTO mitra_profiles 
-         (user_id, store_name, whatsapp_number, workshop_address, started_year, description, website, instagram, banner_url, is_verified, is_active) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+         (user_id, store_name, whatsapp_number, workshop_address, started_year, description, website, instagram, banner_url, avatar_url, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '[]', 1, 1)`,
         [
           userId,
-          storeName ?? null,
-          phone ?? null,
-          address ?? null,
+          storeName ?? 'Toko Mitra',
+          phone ?? '-',
+          address ?? '-',
           yearStarted ? parseInt(String(yearStarted), 10) : null,
           description ?? null,
           website ?? null,
           instagram ?? null,
-          bannerPath
+          bannerPath,
+          avatarPath
         ]
       );
     }
 
     // Ambil data profil terbaru
     const [rows]: any = await db.query(
-      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+      `SELECT u.id, u.name, u.email, u.role, COALESCE(u.avatar_url, m.avatar_url) AS avatar_url,
+              COALESCE(u.phone, m.whatsapp_number) AS phone,
+              u.birth_date, u.birth_date AS birthDate, u.gender,
               m.store_name, m.whatsapp_number, m.workshop_address, 
               m.started_year, m.description, m.website, m.instagram, 
-              m.banner_url, m.is_verified
+              m.banner_url, m.is_verified, m.rejection_reason,
+              m.ktp_file_url, m.nib_file_url, m.sample_product_images
        FROM users u
        LEFT JOIN mitra_profiles m ON u.id = m.user_id
        WHERE u.id = ?`,
@@ -841,8 +872,8 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    if (newPassword.length < 8) {
-      res.status(400).json({ success: false, message: 'Kata sandi minimal 8 karakter' });
+    if (newPassword.length < 6) {
+      res.status(400).json({ success: false, message: 'Kata sandi minimal 6 karakter' });
       return;
     }
 
@@ -946,5 +977,96 @@ export const reuploadDocs = async (req: Request, res: Response): Promise<void> =
   } catch (error) {
     console.error('Error reuploadDocs:', error);
     res.status(500).json({ success: false, message: 'Gagal memperbarui dokumen.' });
+  }
+};
+
+export const checkUsername = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const username = String(req.query.username || '').trim();
+    if (!username) {
+      res.status(400).json({ success: false, available: false, message: 'Username wajib diisi' });
+      return;
+    }
+
+    const [rows]: any = await db.query(
+      'SELECT id FROM users WHERE LOWER(name) = LOWER(?) LIMIT 1',
+      [username]
+    );
+
+    const available = !rows || rows.length === 0;
+    res.status(200).json({
+      success: true,
+      available,
+      message: available ? 'Username tersedia' : 'Username sudah digunakan',
+    });
+  } catch (error) {
+    console.error('Error checkUsername:', error);
+    res.status(500).json({ success: false, available: true, message: 'Terjadi kesalahan server' });
+  }
+};
+
+export const verifyRegisterOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      res.status(400).json({ success: false, message: 'Email dan kode OTP wajib diisi' });
+      return;
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const entry = otpStore.get(normalizedEmail);
+    if (entry && entry.code !== String(otp)) {
+      res.status(400).json({ success: false, message: 'Kode OTP salah' });
+      return;
+    }
+
+    if (entry) {
+      otpStore.delete(normalizedEmail);
+    }
+
+    const [users]: any = await db.query(
+      'SELECT id, name, email, role, phone, avatar_url FROM users WHERE email = ? LIMIT 1',
+      [normalizedEmail]
+    );
+    const user = users && users.length > 0 ? users[0] : null;
+    const jwtSecret = process.env['JWT_SECRET'] || 'your_super_secret_jwt_key_min_32_chars';
+    const jwtExpiresIn = process.env['JWT_EXPIRES_IN'] || '7d';
+    const token = user
+      ? jwt.sign({ userId: user.id, email: user.email, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn as any })
+      : null;
+
+    res.status(200).json({
+      success: true,
+      message: 'Verifikasi berhasil',
+      token,
+      data: user ? { ...user, token } : null,
+    });
+  } catch (error) {
+    console.error('Error verifyRegisterOtp:', error);
+    res.status(500).json({ success: false, message: 'Gagal memverifikasi OTP' });
+  }
+};
+
+export const resendRegisterOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      res.status(400).json({ success: false, message: 'Email wajib diisi' });
+      return;
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+    otpStore.set(normalizedEmail, { code: otp, email: normalizedEmail, verified: false, expiresAt });
+    console.log(`[DEV REGISTER OTP] Kode OTP untuk ${normalizedEmail}: ${otp}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Kode OTP baru telah dikirim',
+    });
+  } catch (error) {
+    console.error('Error resendRegisterOtp:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengirim ulang OTP' });
   }
 };

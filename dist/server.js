@@ -10,10 +10,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const app_js_1 = __importDefault(require("./app.js"));
 const database_js_1 = require("./config/database.js");
 const AiSetting_js_1 = __importDefault(require("./models/AiSetting.js"));
+const MitraProfile_js_1 = require("./models/MitraProfile.js");
 const PORT = process.env.PORT || 5000;
 const startServer = async () => {
     // Tes koneksi database sebelum server mulai menerima request
     await (0, database_js_1.testConnection)();
+    // Pastikan skema tabel mitra_profiles konsisten dengan model & query controller
+    await (0, MitraProfile_js_1.ensureMitraProfileSchema)();
+    console.log('✅ Mitra Profiles schema verified and ready.');
     // Pastikan tabel ai_settings tersinkronisasi dan memiliki default row (ID = 1)
     await AiSetting_js_1.default.sync();
     await AiSetting_js_1.default.findOrCreate({

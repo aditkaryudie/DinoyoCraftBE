@@ -3,8 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPaymentStatus = exports.createPayment = exports.getPaymentMethods = void 0;
+exports.confirmPayment = exports.getPaymentStatus = exports.createPayment = exports.getPaymentMethods = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
+const notificationService_js_1 = require("../services/notificationService.js");
 const getPaymentMethods = async (_req, res) => {
     const methods = [
         {
@@ -38,7 +39,7 @@ const getPaymentMethods = async (_req, res) => {
     ];
     res.status(200).json({
         success: true,
-        data: methods
+        data: { methods }
     });
 };
 exports.getPaymentMethods = getPaymentMethods;
@@ -49,31 +50,48 @@ const createPayment = async (req, res) => {
             res.status(400).json({ success: false, message: 'order_id wajib diisi' });
             return;
         }
-        const [orders] = await database_js_1.default.query(`SELECT o.id, o.total_amount, o.status, t.id AS transaction_id, t.reference_code
+        const [orders] = await database_js_1.default.query(`SELECT o.id, o.user_id, o.mitra_id, o.total_amount, o.total_due, o.application_fee, o.status,
+              t.id AS transaction_id, t.reference_code, t.status AS payment_status
        FROM orders o
-       LEFT JOIN transactions t ON o.transaction_id = t.id
-       WHERE o.id = ? LIMIT 1`, [order_id]);
+       LEFT JOIN transactions t ON t.order_id = o.id
+       WHERE o.id = ?
+       ORDER BY t.id DESC
+       LIMIT 1`, [order_id]);
         if (!orders || orders.length === 0) {
             res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
             return;
         }
         const order = orders[0];
-        const amount = Number(order.total_amount);
+        const baseAmount = Number(order.total_amount || 0);
+        const serviceFee = Number(order.application_fee || 0);
+        const totalPay = Number(order.total_due || baseAmount + serviceFee);
         const refCode = order.reference_code || `TRX-${order.id}-${Date.now()}`;
-        // Dummy/Mock QRIS code compliant standard (or gateway response)
-        const qrisString = `00020101021226670016ID.CO.SOCIABUZZ.WWW01189360091800000000010215${refCode}520458125303360540${amount}.005802ID5910DINOYOCRAFT6006MALANG62070703A016304`;
+        const qrisString = `00020101021226670016ID.CO.SOCIABUZZ.WWW01189360091800000000010215${refCode}520458125303360540${totalPay}.005802ID5910DINOYOCRAFT6006MALANG62070703A016304`;
         const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrisString)}`;
+        if (order.transaction_id) {
+            await database_js_1.default
+                .query(`UPDATE transactions SET qr_string = ?, payment_method = ?, updated_at = NOW() WHERE id = ?`, [qrisString, payment_method, order.transaction_id])
+                .catch(() => { });
+        }
         res.status(200).json({
             success: true,
             message: 'Pembayaran berhasil diinisiasi',
             data: {
                 order_id: Number(order_id),
+                transaction_id: Number(order.transaction_id || 0),
                 reference_code: refCode,
                 payment_method,
-                amount,
+                label: String(payment_method).toUpperCase(),
+                amount: totalPay,
+                base_amount: baseAmount,
+                service_fee: serviceFee,
+                total_pay: totalPay,
+                qr_string: qrisString,
                 qris_string: qrisString,
                 qr_image_url: qrImageUrl,
-                expiry_time: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+                payment_status: order.payment_status || 'pending',
+                status: order.payment_status || 'pending',
+                expiry_time: new Date(Date.now() + 15 * 60 * 1000).toISOString()
             }
         });
     }
@@ -86,10 +104,13 @@ exports.createPayment = createPayment;
 const getPaymentStatus = async (req, res) => {
     try {
         const { orderId } = req.params;
-        const [orders] = await database_js_1.default.query(`SELECT o.id, o.status AS order_status, o.total_amount, t.status AS payment_status, t.reference_code
+        const [orders] = await database_js_1.default.query(`SELECT o.id, o.status AS order_status, o.total_amount, o.total_due,
+              t.status AS payment_status, t.reference_code
        FROM orders o
-       LEFT JOIN transactions t ON o.transaction_id = t.id
-       WHERE o.id = ? LIMIT 1`, [orderId]);
+       LEFT JOIN transactions t ON t.order_id = o.id
+       WHERE o.id = ?
+       ORDER BY t.id DESC
+       LIMIT 1`, [orderId]);
         if (!orders || orders.length === 0) {
             res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
             return;
@@ -100,9 +121,10 @@ const getPaymentStatus = async (req, res) => {
             data: {
                 order_id: Number(orderId),
                 reference_code: order.reference_code,
+                status: order.order_status,
                 payment_status: order.payment_status || order.order_status,
                 order_status: order.order_status,
-                is_paid: order.order_status !== 'pending' && order.payment_status === 'success',
+                is_paid: order.order_status !== 'pending' && order.payment_status === 'success'
             }
         });
     }
@@ -112,4 +134,64 @@ const getPaymentStatus = async (req, res) => {
     }
 };
 exports.getPaymentStatus = getPaymentStatus;
+const confirmPayment = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const [orders] = await database_js_1.default.query(`SELECT o.id, o.user_id, o.mitra_id, o.status, o.total_due, o.total_amount,
+              t.id AS transaction_id, t.reference_code
+       FROM orders o
+       LEFT JOIN transactions t ON t.order_id = o.id
+       WHERE o.id = ?
+       ORDER BY t.id DESC
+       LIMIT 1`, [orderId]);
+        if (!orders || orders.length === 0) {
+            res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
+            return;
+        }
+        const order = orders[0];
+        if (order.status === 'pending') {
+            await database_js_1.default.query(`UPDATE orders SET status = 'paid', updated_at = NOW() WHERE id = ?`, [orderId]);
+        }
+        await database_js_1.default.query(`UPDATE transactions SET status = 'success', updated_at = NOW() WHERE order_id = ?`, [orderId]);
+        // Simpan notifikasi ke pembeli & mitra
+        await database_js_1.default
+            .query(`INSERT INTO notifications (user_id, title, body, type, reference_id, is_read, created_at)
+         VALUES (?, ?, ?, 'order', ?, 0, NOW())`, [
+            order.user_id,
+            'Pembayaran Berhasil! ✅',
+            `Pembayaran pesanan #${order.id} telah lunas. Pengrajin akan segera mengemas pesanan Anda.`,
+            String(order.id)
+        ])
+            .catch(() => { });
+        const [mitraOwner] = await database_js_1.default.query('SELECT user_id FROM mitra_profiles WHERE id = ? LIMIT 1', [order.mitra_id]);
+        if (mitraOwner && mitraOwner.length > 0) {
+            await database_js_1.default
+                .query(`INSERT INTO notifications (user_id, title, body, type, reference_id, is_read, created_at)
+           VALUES (?, ?, ?, 'order', ?, 0, NOW())`, [
+                mitraOwner[0].user_id,
+                'Pesanan Telah Dibayar! 💰',
+                `Pesanan #${order.id} telah dibayar lunas. Silakan segera kemas dan kirim pesanan.`,
+                String(order.id)
+            ])
+                .catch(() => { });
+        }
+        (0, notificationService_js_1.sendPushNotificationToUser)(order.user_id, 'Pembayaran Berhasil! ✅', `Pembayaran pesanan #${order.id} telah lunas dan diteruskan ke pengrajin.`, { type: 'order', order_id: String(order.id), status: 'paid' }).catch(() => { });
+        res.status(200).json({
+            success: true,
+            message: 'Pembayaran berhasil dikonfirmasi',
+            data: {
+                order_id: Number(orderId),
+                status: 'paid',
+                payment_status: 'success',
+                order_status: 'paid',
+                is_paid: true
+            }
+        });
+    }
+    catch (error) {
+        console.error('Error confirmPayment:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengonfirmasi pembayaran' });
+    }
+};
+exports.confirmPayment = confirmPayment;
 //# sourceMappingURL=paymentController.js.map

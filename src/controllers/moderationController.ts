@@ -4,7 +4,24 @@
 // ============================================================
 
 import { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import pool from '../config/database.js';
+
+const extractOptionalUserId = (req: Request, res: Response): number | null => {
+  const existing = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+  if (existing) return Number(existing);
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1] || '';
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'rahasia_negara');
+      return Number(decoded?.id || decoded?.userId || 0) || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
 
 let tablesInitialized = false;
 
@@ -372,10 +389,12 @@ export const handleDeletionAction = async (req: Request, res: Response): Promise
 export const submitReport = async (req: Request, res: Response): Promise<void> => {
   try {
     await ensureModerationTables();
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    const { type, target_id, target_name, reason } = req.body;
+    const userId = extractOptionalUserId(req, res);
+    const { type, target_type, target_id, target_name, reason, details } = req.body;
+    const resolvedType = type || target_type || 'produk';
+    const resolvedReason = details ? `${reason || ''} - ${details}`.trim() : reason;
 
-    if (!type || !reason) {
+    if (!resolvedType || !resolvedReason) {
       res.status(400).json({ success: false, message: 'Tipe dan alasan laporan wajib diisi' });
       return;
     }
@@ -389,7 +408,7 @@ export const submitReport = async (req: Request, res: Response): Promise<void> =
     const [result]: any = await pool.query(
       `INSERT INTO reports (reporter_id, reporter_name, type, target_id, target_name, reason, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-      [userId || null, reporterName, type, target_id || null, target_name || '-', reason]
+      [userId || null, reporterName, resolvedType, target_id || null, target_name || '-', resolvedReason]
     );
 
     res.status(201).json({
@@ -406,8 +425,9 @@ export const submitReport = async (req: Request, res: Response): Promise<void> =
 export const submitAccountDeletion = async (req: Request, res: Response): Promise<void> => {
   try {
     await ensureModerationTables();
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    const { reason, email, name } = req.body;
+    const userId = extractOptionalUserId(req, res);
+    const { reason, details, email, name } = req.body;
+    const resolvedReason = details ? `${reason || ''} - ${details}`.trim() : reason;
 
     let userEmail = email;
     let userName = name;
@@ -420,7 +440,7 @@ export const submitAccountDeletion = async (req: Request, res: Response): Promis
       }
     }
 
-    if (!userEmail || !reason) {
+    if (!userEmail || !resolvedReason) {
       res.status(400).json({ success: false, message: 'Email dan alasan penghapusan akun wajib diisi' });
       return;
     }
@@ -428,7 +448,7 @@ export const submitAccountDeletion = async (req: Request, res: Response): Promis
     const [result]: any = await pool.query(
       `INSERT INTO account_deletions (user_id, name, email, reason, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`,
-      [userId || null, userName || 'Pengguna', userEmail, reason]
+      [userId || null, userName || 'Pengguna', userEmail, resolvedReason]
     );
 
     res.status(201).json({

@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 
 // Pastikan folder uploads tersedia secara otomatis
-const targetFolder = path.join(process.cwd(), 'uploads');
+const targetFolder = path.resolve(__dirname, '../../uploads');
 if (!fs.existsSync(targetFolder)) {
   fs.mkdirSync(targetFolder, { recursive: true });
 }

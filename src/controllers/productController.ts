@@ -89,7 +89,7 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
     }
     const mitraId = profiles[0].id;
 
-    const { name, description, price, stock, category_id } = req.body;
+    const { name, description, price, stock, category_id, image_url } = req.body;
 
     // Validasi input
     if (!name || !price || !stock || !category_id) {
@@ -104,9 +104,13 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
       parsedCategoryId = catRows && catRows.length > 0 ? catRows[0].id : 1;
     }
 
-    // Tangani file foto jika diupload
+    // Tangani file foto jika diupload atau URL gambar eksternal
     const file = req.file;
-    const imageUrls = file ? JSON.stringify([`/uploads/${file.filename}`]) : null;
+    const imageUrls = file
+      ? JSON.stringify([`/uploads/${file.filename}`])
+      : image_url && typeof image_url === 'string' && image_url.trim()
+      ? JSON.stringify([image_url.trim()])
+      : null;
 
     const query = `
       INSERT INTO products (mitra_id, category_id, name, description, price, stock, image_urls, created_at, updated_at) 
@@ -127,6 +131,7 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
       success: true,
       message: 'Produk berhasil ditambahkan',
       productId: result?.insertId,
+      data: { id: result?.insertId }
     });
   } catch (error) {
     console.error('Error tambah produk:', error);
@@ -205,9 +210,10 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
         COALESCE(m.store_name, 'Toko Keramik') AS studio,
         COALESCE(m.store_name, 'Toko Keramik') AS store_name,
         m.workshop_address,
-        m.avatar_url AS store_avatar_url
+        COALESCE(m.avatar_url, u.avatar_url) AS store_avatar_url
       FROM products p
       LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
+      LEFT JOIN users u ON m.user_id = u.id
       LEFT JOIN categories c ON p.category_id = c.id
       ${whereClause}
       ORDER BY ${orderBy}
@@ -297,10 +303,11 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
         m.workshop_address,
         m.whatsapp_number,
         m.description AS store_description,
-        m.avatar_url AS store_avatar_url,
+        COALESCE(m.avatar_url, u.avatar_url) AS store_avatar_url,
         m.banner_url AS store_banner_url
       FROM products p
       LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
+      LEFT JOIN users u ON m.user_id = u.id
       LEFT JOIN categories c ON p.category_id = c.id
       WHERE p.id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
       LIMIT 1

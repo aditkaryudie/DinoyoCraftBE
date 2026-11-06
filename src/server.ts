@@ -6,12 +6,17 @@
 import app from './app.js';
 import { testConnection } from './config/database.js';
 import AiSetting from './models/AiSetting.js';
+import { ensureMitraProfileSchema } from './models/MitraProfile.js';
 
 const PORT = process.env.PORT || 5000;
 
 const startServer = async (): Promise<void> => {
   // Tes koneksi database sebelum server mulai menerima request
   await testConnection();
+
+  // Pastikan skema tabel mitra_profiles konsisten dengan model & query controller
+  await ensureMitraProfileSchema();
+  console.log('✅ Mitra Profiles schema verified and ready.');
 
   // Pastikan tabel ai_settings tersinkronisasi dan memiliki default row (ID = 1)
   await AiSetting.sync();

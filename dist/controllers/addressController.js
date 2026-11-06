@@ -28,8 +28,9 @@ const createAddress = async (req, res) => {
             res.status(401).json({ success: false, message: 'Unauthorized' });
             return;
         }
-        const { recipient_name, phone, full_address, is_default } = req.body;
-        if (!recipient_name || !phone || !full_address) {
+        const { label, recipient_name, phone, phone_number, full_address, is_default } = req.body;
+        const resolvedPhone = phone || phone_number;
+        if (!recipient_name || !resolvedPhone || !full_address) {
             res.status(400).json({ success: false, message: 'Nama penerima, no HP, dan alamat lengkap wajib diisi' });
             return;
         }
@@ -38,12 +39,16 @@ const createAddress = async (req, res) => {
             await database_js_1.default.query('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [userId]);
         }
         const [result] = await database_js_1.default.query(`INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default, created_at)
-       VALUES (?, ?, ?, ?, ?, NOW())`, [userId, recipient_name.trim(), phone.trim(), full_address.trim(), isDefaultInt]);
+       VALUES (?, ?, ?, ?, ?, NOW())`, [userId, recipient_name.trim(), String(resolvedPhone).trim(), full_address.trim(), isDefaultInt]);
         const [created] = await database_js_1.default.query('SELECT * FROM user_addresses WHERE id = ?', [result.insertId]);
         res.status(201).json({
             success: true,
             message: 'Alamat berhasil ditambahkan',
-            data: created[0]
+            data: {
+                ...created[0],
+                label: label || created[0]?.label || 'Rumah',
+                phone_number: created[0]?.phone || String(resolvedPhone).trim(),
+            }
         });
     }
     catch (error) {

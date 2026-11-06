@@ -14,57 +14,40 @@ const router = Router();
 /**
  * @route   GET /api/admin/dashboard-stats
  * @desc    Mendapatkan ringkasan statistik dan aktivitas dashboard admin
- * @access  Admin (atau public untuk dev/test)
  */
 router.get('/dashboard-stats', adminController.getDashboardStats);
 
 /**
  * @route   GET /api/admin/ai-settings
  * @desc    Mendapatkan konfigurasi AI Assistant
- * @access  Admin
  */
 router.get('/ai-settings', getAiSettings);
 
 /**
  * @route   PUT /api/admin/ai-settings
  * @desc    Menyimpan / memperbarui konfigurasi AI Assistant
- * @access  Admin
  */
 router.put('/ai-settings', updateAiSettings);
 
 // Semua route di bawah ini memerlukan autentikasi + role admin
 router.use(verifyToken, requireRole(['admin']));
 
-/**
- * @route   GET /api/admin/users
- * @desc    Mendapatkan semua pengguna (dengan paginasi)
- * @access  Admin only
- */
-router.get('/users', adminController.getAllUsers);
+// Transaksi Lintas Toko
+router.get('/transactions', adminController.getAdminTransactions);
 
-/**
- * @route   PATCH /api/admin/users/:id/status
- * @desc    Mengaktifkan / menonaktifkan akun pengguna
- * @access  Admin only
- */
+// Manajemen Pengguna
+router.get('/users', adminController.getAllUsers);
+router.post('/users', adminController.createUser);
+router.put('/users/:id', adminController.updateUser);
+router.delete('/users/:id', adminController.deleteUser);
 router.patch(
   '/users/:id/status',
   validateBody([{ field: 'is_active', required: true, type: 'boolean' }]),
   adminController.updateUserStatus
 );
 
-/**
- * @route   GET /api/admin/master-data
- * @desc    Mendapatkan data master (opsional filter by category)
- * @access  Admin only
- */
+// Master Data
 router.get('/master-data', adminController.getMasterData);
-
-/**
- * @route   POST /api/admin/master-data
- * @desc    Membuat data master baru
- * @access  Admin only
- */
 router.post(
   '/master-data',
   validateBody([
@@ -75,22 +58,26 @@ router.post(
   adminController.createMasterData
 );
 
-/**
- * @route   GET /api/admin/verifikasi
- * @desc    Mendapatkan daftar pengajuan verifikasi toko mitra
- * @access  Admin only
- */
+// Verifikasi & Manajemen Toko Mitra
 router.get('/verifikasi', adminController.getVerifikasiList);
-
-/**
- * @route   PATCH /api/admin/verifikasi/:id
- * @desc    Setujui / tolak verifikasi toko mitra
- * @access  Admin only
- */
 router.patch(
   '/verifikasi/:id',
   validateBody([{ field: 'status', required: true, type: 'string' }]),
   adminController.verifyMitraStore
 );
+router.patch('/stores/:id/status', adminController.updateStoreStatus);
+router.delete('/stores/:id', adminController.deleteStore);
+
+// Manajemen Kategori Produk
+router.get('/categories', adminController.getCategories);
+router.post('/categories', adminController.createCategory);
+router.put('/categories/:id', adminController.updateCategory);
+router.delete('/categories/:id', adminController.deleteCategory);
+
+// Manajemen Jadwal Kunjungan Edukasi
+router.get('/schedules', adminController.getSchedules);
+router.post('/schedules', adminController.createSchedule);
+router.put('/schedules/:id', adminController.updateSchedule);
+router.delete('/schedules/:id', adminController.deleteSchedule);
 
 export default router;

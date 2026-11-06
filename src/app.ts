@@ -13,6 +13,7 @@ import path from 'path';
 
 // Load environment variables SEBELUM apapun
 dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app: Application = express();
 
@@ -67,7 +68,7 @@ app.get(['/health', '/api/health'], (_req: Request, res: Response) => {
 });
 
 // Kunci target folder baca agar PERSIS SAMA dengan Multer
-const targetFolder = path.join(process.cwd(), 'uploads');
+const targetFolder = path.resolve(__dirname, '../uploads');
 console.log('📂 Static Server membaca dari:', targetFolder);
 app.use('/uploads', express.static(targetFolder));
 

@@ -32,6 +32,7 @@ router.use('/mitra', mitraRoutes);
 router.use('/chat', chatRoutes);
 router.use('/addresses', addressRoutes);
 router.use('/cart', cartRoutes);
+router.use('/carts', cartRoutes);
 router.use('/orders', orderRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/reviews', reviewRoutes);

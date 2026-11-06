@@ -16,6 +16,7 @@ const auditMiddleware_js_1 = require("./middlewares/auditMiddleware.js");
 const path_1 = __importDefault(require("path"));
 // Load environment variables SEBELUM apapun
 dotenv_1.default.config();
+dotenv_1.default.config({ path: path_1.default.resolve(__dirname, '../.env') });
 const app = (0, express_1.default)();
 // -------------------------------------------------------
 // 1. CORS — Konfigurasi origin ramah Mobile & Web
@@ -61,7 +62,7 @@ app.get(['/health', '/api/health'], (_req, res) => {
     });
 });
 // Kunci target folder baca agar PERSIS SAMA dengan Multer
-const targetFolder = path_1.default.join(process.cwd(), 'uploads');
+const targetFolder = path_1.default.resolve(__dirname, '../uploads');
 console.log('📂 Static Server membaca dari:', targetFolder);
 app.use('/uploads', express_1.default.static(targetFolder));
 // -------------------------------------------------------

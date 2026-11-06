@@ -29,8 +29,9 @@ export const createAddress = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const { recipient_name, phone, full_address, is_default } = req.body;
-    if (!recipient_name || !phone || !full_address) {
+    const { label, recipient_name, phone, phone_number, full_address, is_default } = req.body;
+    const resolvedPhone = phone || phone_number;
+    if (!recipient_name || !resolvedPhone || !full_address) {
       res.status(400).json({ success: false, message: 'Nama penerima, no HP, dan alamat lengkap wajib diisi' });
       return;
     }
@@ -43,7 +44,7 @@ export const createAddress = async (req: Request, res: Response): Promise<void> 
     const [result]: any = await pool.query(
       `INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default, created_at)
        VALUES (?, ?, ?, ?, ?, NOW())`,
-      [userId, recipient_name.trim(), phone.trim(), full_address.trim(), isDefaultInt]
+      [userId, recipient_name.trim(), String(resolvedPhone).trim(), full_address.trim(), isDefaultInt]
     );
 
     const [created]: any = await pool.query('SELECT * FROM user_addresses WHERE id = ?', [result.insertId]);
@@ -51,7 +52,11 @@ export const createAddress = async (req: Request, res: Response): Promise<void> 
     res.status(201).json({
       success: true,
       message: 'Alamat berhasil ditambahkan',
-      data: created[0]
+      data: {
+        ...created[0],
+        label: label || created[0]?.label || 'Rumah',
+        phone_number: created[0]?.phone || String(resolvedPhone).trim(),
+      }
     });
   } catch (error) {
     console.error('Error createAddress:', error);

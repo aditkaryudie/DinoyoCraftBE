@@ -15,7 +15,7 @@ router.get('/:id/public', productController_js_1.getPublicProductDetail);
 // Route untuk produk mitra
 router.get('/', authMiddleware_js_1.verifyToken, productController_js_1.getProdukMitra);
 router.post('/', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.default.single('image'), productController_js_1.tambahProduk);
-router.put('/:id', authMiddleware_js_1.verifyToken, mitraController_js_1.updateProduct);
+router.put('/:id', authMiddleware_js_1.verifyToken, uploadMiddleware_js_1.default.single('image'), mitraController_js_1.updateProduct);
 router.delete('/:id', authMiddleware_js_1.verifyToken, productController_js_1.hapusProduk);
 exports.default = router;
 //# sourceMappingURL=productRoutes.js.map

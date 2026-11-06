@@ -6,8 +6,10 @@
 import mysql from 'mysql2/promise';
 import { Sequelize } from 'sequelize';
 import dotenv from 'dotenv';
+import path from 'path';
 
 dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const dbHost = process.env['DB_HOST'] ?? 'localhost';
 const dbPort = Number(process.env['DB_PORT'] ?? 3306);
