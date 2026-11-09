@@ -1,3 +1,4 @@
+// @ts-ignore
 import midtransClient from 'midtrans-client';
 import dotenv from 'dotenv';
 
