@@ -17,8 +17,12 @@ export const getStoreProfile = async (req: Request, res: Response): Promise<void
         m.store_name,
         m.workshop_address,
         m.description,
-        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
-        m.banner_url,
+        CASE 
+          WHEN m.avatar_url IS NOT NULL AND m.avatar_url != '' AND m.avatar_url NOT LIKE '%googleusercontent.com%' AND m.avatar_url NOT LIKE '%google.com%' THEN m.avatar_url
+          WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+          ELSE NULL 
+        END AS avatar_url,
+        COALESCE(NULLIF(m.banner_url, ''), 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?q=80&w=1200&auto=format&fit=crop') AS banner_url,
         u.name AS owner_name
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id

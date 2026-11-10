@@ -157,7 +157,7 @@ export const hapusProduk = async (req: Request, res: Response): Promise<void> =>
 
 export const getPublicProducts = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { category, search, sort, page = '1', limit = '20' } = req.query;
+    const { category, search, sort, store_id, mitra_id, page = '1', limit = '20' } = req.query;
 
     const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
     const limitNum = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 20));
@@ -165,6 +165,12 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
 
     const conditions: string[] = ['(p.is_deleted = 0 OR p.is_deleted IS NULL)'];
     const params: any[] = [];
+
+    const targetStoreId = store_id || mitra_id;
+    if (targetStoreId) {
+      conditions.push('p.mitra_id = ?');
+      params.push(targetStoreId);
+    }
 
     if (category) {
       conditions.push('(c.name = ? OR c.id = ?)');

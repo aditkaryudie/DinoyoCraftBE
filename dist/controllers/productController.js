@@ -148,12 +148,17 @@ const hapusProduk = async (req, res) => {
 exports.hapusProduk = hapusProduk;
 const getPublicProducts = async (req, res) => {
     try {
-        const { category, search, sort, page = '1', limit = '20' } = req.query;
+        const { category, search, sort, store_id, mitra_id, page = '1', limit = '20' } = req.query;
         const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
         const limitNum = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 20));
         const offset = (pageNum - 1) * limitNum;
         const conditions = ['(p.is_deleted = 0 OR p.is_deleted IS NULL)'];
         const params = [];
+        const targetStoreId = store_id || mitra_id;
+        if (targetStoreId) {
+            conditions.push('p.mitra_id = ?');
+            params.push(targetStoreId);
+        }
         if (category) {
             conditions.push('(c.name = ? OR c.id = ?)');
             params.push(category, category);

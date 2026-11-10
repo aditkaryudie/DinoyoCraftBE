@@ -1,10 +1,9 @@
-import { sendOTPEmail } from '../utils/emailService.js';
+import { sendOTPEmail, getTransporter } from '../utils/emailService.js';
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import db from '../config/database';
-import nodemailer from 'nodemailer';
 import path from 'path';
 import fs from 'fs';
 
@@ -977,14 +976,7 @@ setInterval(() => {
 
 
 
-// Konfigurasi Email Pengirim
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env['EMAIL_USER'],
-    pass: process.env['EMAIL_PASS'], // Pastikan pakai 16-digit App Password dari Google
-  },
-});
+
 
 // ============================================================
 // FORGOT PASSWORD Ã¢â‚¬â€ Kirim OTP ke email user
@@ -999,8 +991,10 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       return;
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+
     // 1. Cek apakah user ada di database
-    const [users]: any = await db.query('SELECT id, name, email FROM users WHERE email = ?', [email]);
+    const [users]: any = await db.query('SELECT id, name, email FROM users WHERE LOWER(TRIM(email)) = ?', [cleanEmail]);
     if (!users || users.length === 0) {
       res.status(404).json({ success: false, message: 'Akun dengan email tersebut tidak ditemukan.' });
       return;
@@ -1013,7 +1007,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 
     // 3. Simpan OTP ke memory (otpStore) agar bisa dicek oleh fungsi resetPassword nanti
     const expiresAt = Date.now() + 5 * 60 * 1000; // Kadaluarsa dalam 5 menit
-    otpStore.set(email.toLowerCase(), { code: otp, email: email.toLowerCase(), verified: false, expiresAt });
+    otpStore.set(cleanEmail, { code: otp, email: cleanEmail, verified: false, expiresAt });
 
     try {
       const expiresDate = new Date(Date.now() + 5 * 60 * 1000);
@@ -1027,7 +1021,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 
     // 4. Print ke terminal (Biar kamu tidak perlu nunggu email masuk saat testing!)
     console.log(`\n========================================`);
-    console.log(`[DEV OTP] Kode OTP untuk ${email}: ${otp}`);
+    console.log(`[DEV OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
     console.log(`========================================\n`);
 
     // 5. Kirim OTP via Email dengan Template Branded DinoyoCraft & Logo Project
@@ -1045,8 +1039,8 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       : [];
 
     const mailOptions = {
-      from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER']}>`,
-      to: email,
+      from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER'] || 'csdinoyocraft@gmail.com'}>`,
+      to: cleanEmail,
       subject: 'Kode OTP Verifikasi Lupa Kata Sandi - DinoyoCraft',
       html: `
         <!DOCTYPE html>
@@ -1168,7 +1162,8 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     // Kirim jika konfigurasi email terisi
     if (process.env['EMAIL_USER'] && process.env['EMAIL_PASS'] && process.env['EMAIL_PASS'] !== 'xxxx xxxx xxxx xxxx') {
       try {
-        await transporter.sendMail(mailOptions);
+        const mailTransporter = getTransporter();
+        await mailTransporter.sendMail(mailOptions);
         console.log(`Ã¢Å“â€¦ [OTP] Email OTP berhasil dikirim ke ${email}`);
       } catch (mailError) {
         console.error('Ã¢Å¡Â Ã¯Â¸Â [OTP] Gagal mengirim email via Nodemailer:', mailError);
@@ -1179,7 +1174,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 
     res.status(200).json({
       success: true,
-      message: `Instruksi reset kata sandi telah dikirimkan ke ${email}`,
+      message: `Kode OTP verifikasi telah dikirimkan ke email ${cleanEmail}`,
     });
     return;
   } catch (error: any) {
@@ -1201,7 +1196,10 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    let entry = otpStore.get(email.toLowerCase());
+    const cleanEmail = email.toString().trim().toLowerCase();
+    const cleanOtp = otp.toString().trim();
+
+    let entry = otpStore.get(cleanEmail);
 
     if (!entry) {
       // Fallback pengecekan ke tabel database user_otps untuk lingkungan Serverless
@@ -1209,19 +1207,19 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
         `SELECT o.id, o.otp_code, o.expires_at 
          FROM user_otps o
          JOIN users u ON o.user_id = u.id
-         WHERE u.email = ? AND o.otp_code = ? AND o.is_used = 0 AND o.expires_at > NOW()
+         WHERE LOWER(TRIM(u.email)) = ? AND o.otp_code = ? AND o.is_used = 0 AND o.expires_at > NOW()
          ORDER BY o.id DESC LIMIT 1`,
-        [email, otp]
+        [cleanEmail, cleanOtp]
       );
 
       if (dbOtps && dbOtps.length > 0) {
         entry = {
-          code: otp,
-          email: email.toLowerCase(),
+          code: cleanOtp,
+          email: cleanEmail,
           verified: true,
           expiresAt: Date.now() + 5 * 60 * 1000,
         };
-        otpStore.set(email.toLowerCase(), entry);
+        otpStore.set(cleanEmail, entry);
         await db.query('UPDATE user_otps SET is_used = 1 WHERE id = ?', [dbOtps[0].id]);
       }
     }
@@ -1235,7 +1233,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     if (Date.now() > entry.expiresAt) {
-      otpStore.delete(email.toLowerCase());
+      otpStore.delete(cleanEmail);
       res.status(400).json({
         success: false,
         message: 'Kode OTP telah kedaluwarsa. Silakan minta kode OTP baru.',
@@ -1243,7 +1241,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (entry.code !== otp) {
+    if (entry.code !== cleanOtp) {
       res.status(400).json({
         success: false,
         message: 'Kode OTP salah. Periksa kembali kode yang Anda masukkan.',
@@ -1253,7 +1251,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
 
     // Tandai OTP sebagai verified
     entry.verified = true;
-    otpStore.set(email.toLowerCase(), entry);
+    otpStore.set(cleanEmail, entry);
 
     res.status(200).json({
       success: true,
@@ -1288,7 +1286,10 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     }
 
     // Cek OTP terverifikasi atau kode OTP cocok
-    let entry = otpStore.get(email.toLowerCase());
+    const cleanEmail = email.toString().trim().toLowerCase();
+    const cleanOtp = otp.toString().trim();
+
+    let entry = otpStore.get(cleanEmail);
 
     if (!entry) {
       // Fallback pengecekan ke tabel database user_otps untuk lingkungan Serverless
@@ -1296,23 +1297,23 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
         `SELECT o.id, o.otp_code, o.expires_at 
          FROM user_otps o
          JOIN users u ON o.user_id = u.id
-         WHERE u.email = ? AND o.otp_code = ? AND o.is_used = 0 AND o.expires_at > NOW()
+         WHERE LOWER(TRIM(u.email)) = ? AND o.otp_code = ? AND o.is_used = 0 AND o.expires_at > NOW()
          ORDER BY o.id DESC LIMIT 1`,
-        [email, otp]
+        [cleanEmail, cleanOtp]
       );
 
       if (dbOtps && dbOtps.length > 0) {
         entry = {
-          code: otp,
-          email: email.toLowerCase(),
+          code: cleanOtp,
+          email: cleanEmail,
           verified: true,
           expiresAt: Date.now() + 5 * 60 * 1000,
         };
-        otpStore.set(email.toLowerCase(), entry);
+        otpStore.set(cleanEmail, entry);
         await db.query('UPDATE user_otps SET is_used = 1 WHERE id = ?', [dbOtps[0].id]);
       }
     }
-    const isOtpValid = entry && (entry.verified || (otp && entry.code === otp));
+    const isOtpValid = entry && (entry.verified || (cleanOtp && entry.code === cleanOtp));
 
     if (!entry || !isOtpValid) {
       res.status(400).json({
@@ -1323,7 +1324,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     }
 
     if (Date.now() > entry.expiresAt) {
-      otpStore.delete(email.toLowerCase());
+      otpStore.delete(cleanEmail);
       res.status(400).json({
         success: false,
         message: 'Sesi reset telah kedaluwarsa. Silakan ulangi proses dari awal.',
@@ -1331,17 +1332,17 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const [users]: any = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    const [users]: any = await db.query('SELECT id FROM users WHERE LOWER(TRIM(email)) = ?', [cleanEmail]);
     if (!users || users.length === 0) {
       res.status(404).json({ success: false, message: 'Akun dengan email tersebut tidak ditemukan' });
       return;
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
-    await db.query('UPDATE users SET password_hash = ? WHERE email = ?', [passwordHash, email]);
+    await db.query('UPDATE users SET password_hash = ? WHERE LOWER(TRIM(email)) = ?', [passwordHash, cleanEmail]);
 
     // Hapus OTP dari store setelah berhasil reset
-    otpStore.delete(email.toLowerCase());
+    otpStore.delete(cleanEmail);
 
     res.status(200).json({
       success: true,
