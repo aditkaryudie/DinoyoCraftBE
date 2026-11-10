@@ -850,7 +850,7 @@ const forgotPassword = async (req, res) => {
         console.log(`[DEV OTP] Kode OTP untuk ${cleanEmail}: ${otp}`);
         console.log(`========================================\n`);
         // 5. Kirim OTP via Email dengan Template Branded DinoyoCraft & Logo Project
-        const logoUrl = 'https://raw.githubusercontent.com/alifarda126/DinoyoCraftApp/main/assets/images/branding/logo_icon_circle.png';
+        const logoUrl = 'https://raw.githubusercontent.com/alifarda126/DinoyoCraftApp/main/assets/images/branding/logo_black.png';
         const mailOptions = {
             from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER'] || 'csdinoyocraft@gmail.com'}>`,
             to: cleanEmail,
@@ -884,8 +884,8 @@ const forgotPassword = async (req, res) => {
                           <td align="center">
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto 12px;">
                               <tr>
-                                <td align="center" style="width: 76px; height: 76px; background-color: #FFFFFF !important; border-radius: 50%; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); border: 2px solid #ECE3DA; padding: 0;">
-                                  <img src="${logoUrl}" alt="DinoyoCraft Logo" width="76" height="76" style="width: 76px; height: 76px; border-radius: 50%; display: block; border: 0; background-color: #FFFFFF;" />
+                                <td align="center" style="width: 76px; height: 76px; background-color: #FFFFFF !important; border-radius: 18px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); border: 2px solid #ECE3DA; padding: 8px;">
+                                  <img src="${logoUrl}" alt="DinoyoCraft Logo" width="58" height="58" style="width: 58px; height: 58px; object-fit: contain; display: block; border: 0; background-color: #FFFFFF;" />
                                 </td>
                               </tr>
                             </table>
