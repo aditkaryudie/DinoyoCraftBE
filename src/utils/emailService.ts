@@ -5,8 +5,6 @@
 
 import 'dotenv/config';
 import nodemailer from 'nodemailer';
-import path from 'path';
-import fs from 'fs';
 
 /**
  * Membuat transporter Gmail SMTP secara dinamis dari environment variables
@@ -36,18 +34,8 @@ export const sendOTPEmail = async (
   otpCode: string,
   recipientName: string = 'Pengguna'
 ): Promise<void> => {
-  const logoPath = path.join(process.cwd(), 'assets', 'logo.png');
-  const hasLogo = fs.existsSync(logoPath);
-
-  const attachments = hasLogo
-    ? [
-      {
-        filename: 'logo.png',
-        path: logoPath,
-        cid: 'dinoyocraft-logo',
-      },
-    ]
-    : [];
+  const logoUrl =
+    'https://raw.githubusercontent.com/alifarda126/DinoyoCraftApp/main/assets/images/branding/logo_icon_circle.png';
 
   const mailOptions = {
     from: `"DinoyoCraft Portal" <${process.env['EMAIL_USER'] || 'csdinoyocraft@gmail.com'}>`,
@@ -74,10 +62,13 @@ export const sendOTPEmail = async (
                     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 24px;">
                       <tr>
                         <td align="center">
-                          ${hasLogo
-        ? `<img src="cid:dinoyocraft-logo" alt="DinoyoCraft Logo" width="76" height="76" style="width: 76px; height: 76px; border-radius: 18px; object-fit: cover; display: block; margin: 0 auto 12px; box-shadow: 0 6px 18px rgba(184, 92, 60, 0.25);" />`
-        : `<div style="width: 64px; height: 64px; background: #B85C3C; border-radius: 16px; margin: 0 auto 12px; text-align: center; line-height: 64px; font-size: 28px; color: #fff;">🏺</div>`
-      }
+                          <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto 12px;">
+                            <tr>
+                              <td align="center" style="width: 76px; height: 76px; background-color: #FFFFFF !important; border-radius: 50%; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); border: 2px solid #ECE3DA; padding: 0;">
+                                <img src="${logoUrl}" alt="DinoyoCraft Logo" width="76" height="76" style="width: 76px; height: 76px; border-radius: 50%; display: block; border: 0; background-color: #FFFFFF;" />
+                              </td>
+                            </tr>
+                          </table>
                           <h1 style="margin: 0; font-size: 24px; font-weight: 800; color: #2D2A26; letter-spacing: -0.03em;">DinoyoCraft</h1>
                           <p style="margin: 4px 0 0; font-size: 12px; font-weight: 700; color: #B85C3C; letter-spacing: 0.08em; text-transform: uppercase;">Sentra Kerajinan Keramik Dinoyo Malang</p>
                         </td>
@@ -154,7 +145,6 @@ export const sendOTPEmail = async (
       </body>
       </html>
     `,
-    attachments,
   };
 
   try {
