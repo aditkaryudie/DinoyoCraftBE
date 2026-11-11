@@ -1,6 +1,117 @@
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
 
+export interface ProductVariantItem {
+  name: string;
+  hex: string;
+  label: string;
+  stock: number;
+}
+
+export const parseImageUrls = (raw: unknown): string[] => {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((u) => typeof u === 'string' && u.trim() !== '').map((u) => u.trim());
+    }
+    if (typeof parsed === 'string' && parsed.trim() !== '') {
+      return [parsed.trim()];
+    }
+  } catch {
+    const str = String(raw).trim();
+    if (str) return [str];
+  }
+  return [];
+};
+
+export const parseVariants = (raw: unknown): ProductVariantItem[] => {
+  if (!raw) return [];
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === 'null' || trimmed === '[]') return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  const result: ProductVariantItem[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue;
+    const item = entry as Record<string, unknown>;
+    const name = String(item['name'] ?? item['label'] ?? '').trim();
+    if (!name) continue;
+    const hex = String(item['hex'] ?? '#b85c3c').trim() || '#b85c3c';
+    const label = String(item['label'] ?? 'Standar').trim() || 'Standar';
+    const rawStock = Number(item['stock']);
+    const stock = Number.isFinite(rawStock) ? Math.max(0, Math.floor(rawStock)) : 0;
+    result.push({ name, hex, label, stock });
+  }
+  return result;
+};
+
+export const serializeVariantsInput = (raw: unknown): ProductVariantItem[] | null => {
+  const list = parseVariants(raw);
+  return list.length > 0 ? list : null;
+};
+
+export const getVariantAvailableStock = (
+  rawVariants: unknown,
+  totalStock: number,
+  variantName?: string | null
+): number => {
+  const variants = parseVariants(rawVariants);
+  const normalizedTarget = typeof variantName === 'string' ? variantName.trim().toLowerCase() : '';
+  if (variants.length > 0 && normalizedTarget) {
+    const matched = variants.find((v) => v.name.trim().toLowerCase() === normalizedTarget);
+    if (matched) return matched.stock;
+  }
+  return Math.max(0, Number(totalStock) || 0);
+};
+
+export const adjustProductStockAndVariant = async (
+  connection: any,
+  productId: number,
+  deltaQty: number,
+  variantName?: string | null
+): Promise<void> => {
+  const [rows]: any = await connection.query(
+    'SELECT stock, variants FROM products WHERE id = ? FOR UPDATE',
+    [productId]
+  );
+  if (!rows || rows.length === 0) return;
+
+  const currentStock = Number(rows[0].stock) || 0;
+  const variants = parseVariants(rows[0].variants);
+  const target = typeof variantName === 'string' ? variantName.trim().toLowerCase() : '';
+
+  if (variants.length > 0 && target) {
+    let matched = false;
+    const updatedVariants = variants.map((v) => {
+      if (!matched && v.name.trim().toLowerCase() === target) {
+        matched = true;
+        return { ...v, stock: Math.max(0, v.stock + deltaQty) };
+      }
+      return v;
+    });
+    if (matched) {
+      const nextStock = updatedVariants.reduce((sum, v) => sum + v.stock, 0);
+      await connection.query(
+        'UPDATE products SET stock = ?, variants = ? WHERE id = ?',
+        [nextStock, JSON.stringify(updatedVariants), productId]
+      );
+      return;
+    }
+  }
+
+  const nextStock = Math.max(0, currentStock + deltaQty);
+  await connection.query('UPDATE products SET stock = ? WHERE id = ?', [nextStock, productId]);
+};
+
 export const getProdukMitra = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
@@ -23,7 +134,11 @@ export const getProdukMitra = async (req: Request, res: Response): Promise<void>
         p.description,
         p.price,
         p.stock,
+        p.weight_gram,
+        p.variants,
         p.image_urls,
+        p.rating,
+        p.total_reviews,
         p.created_at,
         COALESCE(c.name, 'Dekorasi') AS category
       FROM products p
@@ -35,23 +150,14 @@ export const getProdukMitra = async (req: Request, res: Response): Promise<void>
     const [rows]: any = await pool.query(query, [mitraId]);
 
     const products = rows.map((row: any) => {
-      let imageUrl = '';
-      if (row.image_urls) {
-        try {
-          const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            imageUrl = parsed[0];
-          } else if (typeof parsed === 'string') {
-            imageUrl = parsed;
-          }
-        } catch {
-          imageUrl = String(row.image_urls);
-        }
-      }
+      const imageUrls = parseImageUrls(row.image_urls);
+      let imageUrl = imageUrls.length > 0 ? imageUrls[0] : '';
 
       if (imageUrl && !imageUrl.startsWith('http')) {
         imageUrl = `http://localhost:5000${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
       }
+
+      const variants = parseVariants(row.variants);
 
       return {
         id: String(row.id),
@@ -60,8 +166,11 @@ export const getProdukMitra = async (req: Request, res: Response): Promise<void>
         price: Number(row.price),
         category: row.category,
         stock: Number(row.stock),
+        weight_gram: Number(row.weight_gram) || 500,
         image_url: imageUrl || 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?auto=format&fit=crop&w=400&q=80',
-        variants: [],
+        variants,
+        rating: Number(row.total_reviews) > 0 ? Number(row.rating) : 0,
+        total_reviews: Number(row.total_reviews) || 0,
         reviews: [],
       };
     });
@@ -89,10 +198,10 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
     }
     const mitraId = profiles[0].id;
 
-    const { name, description, price, stock, category_id } = req.body;
+    const { name, description, price, stock, category_id, image_url, variants, weight_gram } = req.body;
 
-    // Validasi input
-    if (!name || !price || !stock || !category_id) {
+    // Validasi input (izinkan stok 0 atau harga 0 bila valid)
+    if (!name || price === undefined || price === '' || stock === undefined || stock === '' || !category_id) {
       res.status(400).json({ success: false, message: 'Semua field wajib diisi' });
       return;
     }
@@ -104,13 +213,24 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
       parsedCategoryId = catRows && catRows.length > 0 ? catRows[0].id : 1;
     }
 
-    // Tangani file foto jika diupload
+    // Tangani file foto jika diupload, atau URL foto eksternal
     const file = req.file;
-    const imageUrls = file ? JSON.stringify([`/uploads/${file.filename}`]) : null;
+    const rawUrl = typeof image_url === 'string' ? image_url.trim() : '';
+    const imageUrls = file
+      ? JSON.stringify([`/uploads/${file.filename}`])
+      : rawUrl && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))
+        ? JSON.stringify([rawUrl])
+        : null;
+
+    const normalizedVariants = serializeVariantsInput(variants);
+    const finalStock = normalizedVariants && normalizedVariants.length > 0
+      ? normalizedVariants.reduce((sum, v) => sum + v.stock, 0)
+      : Math.max(0, parseInt(stock, 10) || 0);
+    const finalWeight = Math.max(1, parseInt(weight_gram, 10) || 500);
 
     const query = `
-      INSERT INTO products (mitra_id, category_id, name, description, price, stock, image_urls, created_at, updated_at) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      INSERT INTO products (mitra_id, category_id, name, description, price, stock, weight_gram, variants, image_urls, created_at, updated_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `;
 
     const [result]: any = await pool.query(query, [
@@ -119,7 +239,9 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
       name,
       description || '',
       parseFloat(price) || 0,
-      parseInt(stock) || 0,
+      finalStock,
+      finalWeight,
+      normalizedVariants ? JSON.stringify(normalizedVariants) : null,
       imageUrls,
     ]);
 
@@ -203,7 +325,11 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
         p.description,
         p.price,
         p.stock,
+        p.weight_gram,
+        p.variants,
         p.image_urls,
+        p.rating,
+        p.total_reviews,
         p.created_at,
         p.updated_at,
         COALESCE(c.name, 'Keramik') AS category,
@@ -211,7 +337,14 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
         COALESCE(m.store_name, 'Toko Keramik') AS studio,
         COALESCE(m.store_name, 'Toko Keramik') AS store_name,
         m.workshop_address,
-        m.avatar_url AS store_avatar_url
+        m.avatar_url AS store_avatar_url,
+        COALESCE(
+          (SELECT SUM(oi.quantity)
+           FROM order_items oi
+           JOIN orders o ON oi.order_id = o.id
+           WHERE oi.product_id = p.id AND o.status != 'cancelled'),
+          0
+        ) AS sold_count
       FROM products p
       LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
       LEFT JOIN categories c ON p.category_id = c.id
@@ -224,21 +357,10 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
     const [rows]: any = await pool.query(query, params);
 
     const products = rows.map((row: any) => {
-      let imageUrls: string[] = [];
-      if (row.image_urls) {
-        try {
-          const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
-          if (Array.isArray(parsed)) {
-            imageUrls = parsed;
-          } else if (typeof parsed === 'string') {
-            imageUrls = [parsed];
-          }
-        } catch {
-          imageUrls = [String(row.image_urls)];
-        }
-      }
-
+      const imageUrls = parseImageUrls(row.image_urls);
       const mainImage = imageUrls.length > 0 ? imageUrls[0] : '';
+      const totalReviews = Number(row.total_reviews) || 0;
+      const rating = totalReviews > 0 ? Number(row.rating) : 0;
 
       return {
         id: String(row.id),
@@ -247,6 +369,8 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
         description: row.description || '',
         price: Number(row.price),
         stock: Number(row.stock),
+        weight_gram: Number(row.weight_gram) || 500,
+        variants: parseVariants(row.variants),
         category: row.category,
         category_id: row.category_id,
         category_name: row.category_name,
@@ -254,7 +378,9 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
         store_name: row.store_name,
         workshop_address: row.workshop_address,
         mitra_id: row.mitra_id,
-        rating: 4.8,
+        rating,
+        total_reviews: totalReviews,
+        sold_count: Number(row.sold_count) || 0,
         image: mainImage || 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?auto=format&fit=crop&w=400&q=80',
         image_url: mainImage,
         images: imageUrls,
@@ -293,7 +419,11 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
         p.description,
         p.price,
         p.stock,
+        p.weight_gram,
+        p.variants,
         p.image_urls,
+        p.rating,
+        p.total_reviews,
         p.created_at,
         p.updated_at,
         COALESCE(c.name, 'Keramik') AS category,
@@ -304,7 +434,14 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
         m.whatsapp_number,
         m.description AS store_description,
         m.avatar_url AS store_avatar_url,
-        m.banner_url AS store_banner_url
+        m.banner_url AS store_banner_url,
+        COALESCE(
+          (SELECT SUM(oi.quantity)
+           FROM order_items oi
+           JOIN orders o ON oi.order_id = o.id
+           WHERE oi.product_id = p.id AND o.status != 'cancelled'),
+          0
+        ) AS sold_count
       FROM products p
       LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
       LEFT JOIN categories c ON p.category_id = c.id
@@ -319,21 +456,46 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
     }
 
     const row = rows[0];
-    let imageUrls: string[] = [];
-    if (row.image_urls) {
-      try {
-        const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
-        if (Array.isArray(parsed)) {
-          imageUrls = parsed;
-        } else if (typeof parsed === 'string') {
-          imageUrls = [parsed];
-        }
-      } catch {
-        imageUrls = [String(row.image_urls)];
-      }
-    }
-
+    const imageUrls = parseImageUrls(row.image_urls);
     const mainImage = imageUrls.length > 0 ? imageUrls[0] : '';
+
+    // Ambil ulasan nyata produk dari database
+    const [reviewRows]: any = await pool.query(
+      `SELECT r.id, r.rating, r.variant, r.comment, r.photo_urls, r.helpful_count,
+              r.seller_reply, r.replied_at, r.created_at, u.name AS user_name
+       FROM reviews r
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE r.product_id = ?
+       ORDER BY r.id DESC
+       LIMIT 10`,
+      [id]
+    );
+
+    const formattedReviews = (reviewRows || []).map((rev: any) => ({
+      id: rev.id,
+      rating: Number(rev.rating) || 5,
+      variant: rev.variant || '',
+      comment: rev.comment || '',
+      photo_urls: parseImageUrls(rev.photo_urls),
+      helpful_count: Number(rev.helpful_count) || 0,
+      seller_reply: rev.seller_reply || null,
+      replied_at: rev.replied_at || null,
+      created_at: rev.created_at,
+      user_name: rev.user_name || 'Pembeli',
+    }));
+
+    const totalReviews = Number(row.total_reviews) || formattedReviews.length;
+    const rating =
+      totalReviews > 0
+        ? (Number(row.rating) > 0
+            ? Number(row.rating)
+            : Number(
+                (
+                  formattedReviews.reduce((s: number, r: any) => s + Number(r.rating || 0), 0) /
+                  formattedReviews.length
+                ).toFixed(1)
+              ))
+        : 0;
 
     const product = {
       id: String(row.id),
@@ -342,13 +504,19 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
       description: row.description || '',
       price: Number(row.price),
       stock: Number(row.stock),
+      weight_gram: Number(row.weight_gram) || 500,
+      variants: parseVariants(row.variants),
       category: row.category,
       category_id: row.category_id,
       category_name: row.category_name,
       studio: row.studio,
       store_name: row.store_name,
+      workshop_address: row.workshop_address,
       mitra_id: row.mitra_id,
-      rating: 4.8,
+      rating,
+      total_reviews: totalReviews,
+      sold_count: Number(row.sold_count) || 0,
+      reviews: formattedReviews,
       image: mainImage,
       image_url: mainImage,
       images: imageUrls,
@@ -362,7 +530,8 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
         description: row.store_description,
         avatar_url: row.store_avatar_url,
         banner_url: row.store_banner_url,
-        rating: 4.9,
+        rating,
+        total_reviews: totalReviews,
       },
       created_at: row.created_at,
     };

@@ -2,8 +2,7 @@
 // ============================================================
 //  src/services/orderSettlement.ts
 //  Penyelesaian pesanan: menandai pesanan LUNAS secara idempoten.
-//  Dipakai bersama oleh: webhook scbz, polling mobile, dan background poller
-//  (pengganti webhook dispatcher Go pada sidecar lama).
+//  Dipakai bersama oleh: webhook Midtrans, polling mobile, dan background poller.
 // ============================================================
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -22,15 +21,14 @@ const pusher_js_1 = __importDefault(require("../utils/pusher.js"));
 async function settleOrderPaid(trx) {
     const connection = await database_js_1.default.getConnection();
     try {
+        await connection.beginTransaction();
         // Idempotency guard — cek ulang di dalam lock transaksi.
         const [current] = await connection.query('SELECT status FROM transactions WHERE id = ? FOR UPDATE', [trx.id]);
         if (!current || current.length === 0 || current[0].status === 'success') {
+            await connection.rollback();
             return false;
         }
-        await connection.beginTransaction();
-        await connection.query("UPDATE transactions SET status = 'success' WHERE id = ?", [
-            trx.id,
-        ]);
+        await connection.query("UPDATE transactions SET status = 'success', paid_at = COALESCE(paid_at, NOW()) WHERE id = ?", [trx.id]);
         await connection.query("UPDATE orders SET status = 'paid' WHERE id = ?", [
             trx.order_id,
         ]);
@@ -56,6 +54,8 @@ async function settleOrderPaid(trx) {
             await pusher_js_1.default.trigger(`user-${trx.user_id}`, 'order-paid', {
                 order_id: trx.order_id,
                 status: 'paid',
+                title: 'Pembayaran Berhasil',
+                message: `Pembayaran pesanan #${trx.order_id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
             });
             await pusher_js_1.default.trigger(`user-${trx.mitra_user_id}`, 'new-paid-order', {
                 order_id: trx.order_id,
@@ -66,8 +66,8 @@ async function settleOrderPaid(trx) {
             // Pusher gagal — non-blocking.
         }
         // Push FCM ke perangkat mitra & pembeli (non-blocking).
-        void (0, notificationService_js_1.sendPushNotificationToUser)(trx.mitra_user_id, 'Pembayaran Diterima!', `Pesanan #${trx.order_id} telah dibayar lunas sebesar Rp ${Number(trx.total_amount || 0).toLocaleString('id-ID')}. Segera proses pesanan ini.`, { type: 'order', route: '/profile', order_id: String(trx.order_id) });
-        void (0, notificationService_js_1.sendPushNotificationToUser)(trx.user_id, 'Pembayaran Berhasil', `Pembayaran pesanan #${trx.order_id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`, { type: 'order', route: '/profile', order_id: String(trx.order_id) });
+        void (0, notificationService_js_1.sendPushNotificationToUser)(trx.mitra_user_id, 'Pembayaran Diterima!', `Pesanan #${trx.order_id} telah dibayar lunas sebesar Rp ${Number(trx.total_amount || 0).toLocaleString('id-ID')}. Segera proses pesanan ini.`, { type: 'order', route: '/profile', order_id: String(trx.order_id), status: 'paid' });
+        void (0, notificationService_js_1.sendPushNotificationToUser)(trx.user_id, 'Pembayaran Berhasil', `Pembayaran pesanan #${trx.order_id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`, { type: 'order', route: '/profile', order_id: String(trx.order_id), status: 'paid' });
         console.log(`✅ [settleOrderPaid] Pesanan #${trx.order_id} ditandai LUNAS.`);
         return true;
     }
@@ -80,16 +80,17 @@ async function settleOrderPaid(trx) {
     }
 }
 /**
- * Cari transaksi berdasarkan inv_id atau payment_token (dipakai webhook).
+ * Cari transaksi berdasarkan gateway_order_id (utama) atau payment_token.
+ * Dipakai webhook Midtrans: order_id notifikasi = gateway_order_id kita.
  */
-async function findTransactionByRef(invId, token) {
+async function findTransactionByRef(gatewayOrderId, token) {
     const [rows] = await database_js_1.default.query(`SELECT t.id, o.id AS order_id, o.user_id, o.mitra_id, o.total_amount,
-            t.status, m.user_id AS mitra_user_id
+            t.amount, t.gateway_fee, t.status, m.user_id AS mitra_user_id
      FROM transactions t
      JOIN orders o ON o.transaction_id = t.id
      JOIN mitra_profiles m ON o.mitra_id = m.id
-     WHERE t.inv_id = ? OR t.payment_token = ?
-     LIMIT 1`, [invId || '', token || '']);
+     WHERE t.gateway_order_id = ? OR t.payment_token = ?
+     LIMIT 1`, [gatewayOrderId || '', token || '']);
     if (!rows || rows.length === 0)
         return null;
     const r = rows[0];
@@ -98,7 +99,9 @@ async function findTransactionByRef(invId, token) {
         order_id: r.order_id,
         user_id: r.user_id,
         mitra_user_id: r.mitra_user_id,
-        total_amount: r.total_amount,
+        total_amount: Number(r.total_amount || 0),
+        amount: Number(r.amount || 0),
+        gateway_fee: Number(r.gateway_fee || 0),
         status: r.status,
     };
 }

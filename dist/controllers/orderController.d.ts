@@ -14,6 +14,7 @@ export declare const getUserOrders: (req: Request, res: Response) => Promise<voi
 export declare const getOrderById: (req: Request, res: Response) => Promise<void>;
 export declare const getMitraOrders: (req: Request, res: Response) => Promise<void>;
 export declare const updateOrderStatus: (req: Request, res: Response) => Promise<void>;
+export declare const confirmOrderCompleted: (req: Request, res: Response) => Promise<void>;
 export declare const cancelOrderByCustomer: (req: Request, res: Response) => Promise<void>;
 export declare const getOrderTracking: (req: Request, res: Response) => Promise<void>;
 export declare const checkoutOrder: typeof checkout;

@@ -7,13 +7,16 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getOrderDetail = exports.getOrders = exports.checkoutOrder = exports.getOrderTracking = exports.cancelOrderByCustomer = exports.updateOrderStatus = exports.getMitraOrders = exports.getOrderById = exports.getUserOrders = exports.checkout = void 0;
+exports.getOrderDetail = exports.getOrders = exports.checkoutOrder = exports.getOrderTracking = exports.cancelOrderByCustomer = exports.confirmOrderCompleted = exports.updateOrderStatus = exports.getMitraOrders = exports.getOrderById = exports.getUserOrders = exports.checkout = void 0;
 exports.recordOrderStatusHistory = recordOrderStatusHistory;
 exports.computeOrderTotals = computeOrderTotals;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
 const pusher_js_1 = __importDefault(require("../utils/pusher.js"));
 const notificationService_js_1 = require("../services/notificationService.js");
+const productController_js_1 = require("./productController.js");
+const midtransService_js_1 = require("../services/midtransService.js");
+const paymentGatewayService_js_1 = require("../services/paymentGatewayService.js");
 // ============================================================
 // HELPER — catat riwayat status pesanan (timeline tracking)
 // ============================================================
@@ -28,14 +31,13 @@ async function recordOrderStatusHistory(orderId, status, trackingNumber, note, c
 }
 // ============================================================
 // HELPER — total tagihan pembayar (satu angka untuk semua layar):
-// barang + ongkir + biaya platform (1.000 + 5%) + fee channel (0,705%)
+// barang + ongkir + biaya platform (Midtrans channel fee ditanggung platform)
 // ============================================================
 function computeOrderTotals(o) {
-    const base = Number(o.total_amount || 0);
-    const storedFee = Number(o.gateway_fee ?? 0);
-    const platform = storedFee > 0 ? storedFee : 1000 + Math.round((base * 5) / 100);
-    const channel = Math.round(((base + platform) * 705) / 100000);
-    return { base, platform, channel, total_due: base + platform + channel };
+    const base = Math.round(Number(o.total_amount || 0));
+    const storedFee = Math.round(Number(o.gateway_fee ?? 0));
+    const platform = storedFee > 0 ? storedFee : (0, midtransService_js_1.platformFeeFor)(base);
+    return { base, platform, channel: 0, total_due: base + platform };
 }
 const checkout = async (req, res) => {
     const connection = await database_js_1.default.getConnection();
@@ -61,16 +63,17 @@ const checkout = async (req, res) => {
         let totalItemsAmount = 0;
         const validatedItems = [];
         for (const item of items) {
-            const [prodRows] = await connection.query('SELECT id, name, price, stock, is_deleted FROM products WHERE id = ? FOR UPDATE', [item.product_id]);
+            const [prodRows] = await connection.query('SELECT id, name, price, stock, variants, is_deleted FROM products WHERE id = ? FOR UPDATE', [item.product_id]);
             if (prodRows.length === 0 || prodRows[0].is_deleted) {
                 await connection.rollback();
                 (0, response_js_1.sendBadRequest)(res, `Produk dengan ID ${item.product_id} tidak ditemukan atau sudah dihapus.`);
                 return;
             }
             const prod = prodRows[0];
-            if (prod.stock < item.quantity) {
+            const availableStock = (0, productController_js_1.getVariantAvailableStock)(prod.variants, Number(prod.stock) || 0, item.variant);
+            if (availableStock < item.quantity) {
                 await connection.rollback();
-                (0, response_js_1.sendBadRequest)(res, `Stok produk '${prod.name}' tidak mencukupi (tersedia: ${prod.stock}, diminta: ${item.quantity}).`);
+                (0, response_js_1.sendBadRequest)(res, `Stok produk '${prod.name}' tidak mencukupi (tersedia: ${availableStock}, diminta: ${item.quantity}).`);
                 return;
             }
             const unitPrice = Number(prod.price);
@@ -86,9 +89,13 @@ const checkout = async (req, res) => {
         const grandTotal = totalItemsAmount + Number(shipping_cost);
         // 4. Buat Kode Referensi Transaksi Unik
         const refCode = `TRX-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-        // 5. Simpan ke Tabel Transactions
-        const [trxResult] = await connection.query(`INSERT INTO transactions (user_id, transaction_type, amount, status, reference_code, notes)
-       VALUES (?, ?, ?, 'pending', ?, ?)`, [userId, payment_method, grandTotal, refCode, customer_notes]);
+        // 5. Simpan ke Tabel Transactions (gateway_fee & expiry_time tetap dihitung resmi di BE)
+        const platformFee = (0, midtransService_js_1.platformFeeFor)(grandTotal);
+        const createdAt = new Date();
+        const deadline = (0, paymentGatewayService_js_1.computeOrderDeadline)(createdAt);
+        const mysqlExpiry = (0, paymentGatewayService_js_1.toMysqlWibDatetime)(deadline);
+        const [trxResult] = await connection.query(`INSERT INTO transactions (user_id, transaction_type, amount, gateway_fee, status, reference_code, notes, expiry_time)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`, [userId, payment_method, grandTotal, platformFee, refCode, customer_notes, mysqlExpiry]);
         const transactionId = trxResult.insertId;
         // 6. Simpan ke Tabel Orders
         const [orderResult] = await connection.query(`INSERT INTO orders (user_id, mitra_id, address_id, transaction_id, total_amount, shipping_cost, shipping_method, customer_notes, status)
@@ -98,7 +105,7 @@ const checkout = async (req, res) => {
         for (const item of validatedItems) {
             await connection.query(`INSERT INTO order_items (order_id, product_id, quantity, unit_price, variant)
          VALUES (?, ?, ?, ?, ?)`, [orderId, item.product_id, item.quantity, item.unit_price, item.variant]);
-            await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.product_id]);
+            await (0, productController_js_1.adjustProductStockAndVariant)(connection, item.product_id, -item.quantity, item.variant);
             // Hapus item dari keranjang user jika ada
             await connection.query('DELETE FROM carts WHERE user_id = ? AND product_id = ?', [userId, item.product_id]);
         }
@@ -124,8 +131,13 @@ const checkout = async (req, res) => {
             order_id: orderId,
             reference_code: refCode,
             total_amount: grandTotal,
+            platform_fee: platformFee,
+            channel_fee: 0,
+            total_due: grandTotal + platformFee,
             payment_method,
             status: 'pending',
+            created_at: (0, paymentGatewayService_js_1.toIsoWibString)(createdAt),
+            expiry_time: (0, paymentGatewayService_js_1.toIsoWibString)(deadline),
         }, 'Pesanan berhasil dibuat.');
     }
     catch (error) {
@@ -158,7 +170,9 @@ const getUserOrders = async (req, res) => {
         m.whatsapp_number AS mitra_phone,
         t.reference_code,
         t.transaction_type AS payment_method,
-        t.status AS payment_status
+        t.status AS payment_status,
+        t.expiry_time,
+        t.paid_at
       FROM orders o
       JOIN mitra_profiles m ON o.mitra_id = m.id
       LEFT JOIN transactions t ON o.transaction_id = t.id
@@ -204,8 +218,14 @@ const getUserOrders = async (req, res) => {
         // kirim sebagai number agar klien mobile tidak salah parse.
         const normalized = orders.map((o) => {
             const totals = computeOrderTotals(o);
+            const deadline = o.status === 'pending'
+                ? (0, paymentGatewayService_js_1.toIsoWibString)((0, paymentGatewayService_js_1.computeOrderDeadline)(o.created_at, o.expiry_time))
+                : (0, paymentGatewayService_js_1.toIsoWibString)(o.expiry_time);
             return {
                 ...o,
+                created_at: (0, paymentGatewayService_js_1.toIsoWibString)(o.created_at) ?? o.created_at,
+                expiry_time: deadline,
+                paid_at: (0, paymentGatewayService_js_1.toIsoWibString)(o.paid_at),
                 total_amount: Number(o.total_amount ?? 0),
                 shipping_cost: Number(o.shipping_cost ?? 0),
                 platform_fee: totals.platform,
@@ -249,7 +269,9 @@ const getOrderById = async (req, res) => {
          t.inv_id,
          t.payment_url,
          t.qr_string,
-         t.gateway_fee
+         t.gateway_fee,
+         t.expiry_time,
+         t.paid_at
        FROM orders o
        JOIN mitra_profiles m ON o.mitra_id = m.id
        LEFT JOIN user_addresses a ON o.address_id = a.id
@@ -287,6 +309,12 @@ const getOrderById = async (req, res) => {
             }
             return { ...item, image_urls: images };
         });
+        const deadline = order.status === 'pending'
+            ? (0, paymentGatewayService_js_1.toIsoWibString)((0, paymentGatewayService_js_1.computeOrderDeadline)(order.created_at, order.expiry_time))
+            : (0, paymentGatewayService_js_1.toIsoWibString)(order.expiry_time);
+        order.created_at = (0, paymentGatewayService_js_1.toIsoWibString)(order.created_at) ?? order.created_at;
+        order.expiry_time = deadline;
+        order.paid_at = (0, paymentGatewayService_js_1.toIsoWibString)(order.paid_at);
         (0, response_js_1.sendSuccess)(res, order, 'Detail pesanan berhasil diambil.');
     }
     catch (error) {
@@ -362,75 +390,152 @@ const updateOrderStatus = async (req, res) => {
         const userId = res.locals['userId'];
         const role = res.locals['role'];
         const { id } = req.params;
-        const { status, tracking_number } = req.body;
+        const { status, tracking_number, shipping_method } = req.body;
         const [orders] = await connection.query(`SELECT o.*, m.user_id AS mitra_user_id 
        FROM orders o
        JOIN mitra_profiles m ON o.mitra_id = m.id
-       WHERE o.id = ?`, [id]);
+       WHERE o.id = ? FOR UPDATE`, [id]);
         if (orders.length === 0) {
             await connection.rollback();
             (0, response_js_1.sendNotFound)(res, 'Pesanan tidak ditemukan.');
             return;
         }
         const order = orders[0];
-        // Hanya admin atau pemilik toko mitra yang boleh update status pengiriman
-        if (role !== 'admin' && order.mitra_user_id !== userId) {
+        const isMitraOrAdmin = role === 'admin' || order.mitra_user_id === userId;
+        const isBuyerCompleting = order.user_id === userId && status === 'completed';
+        // Mitra/Admin berhak mengelola alur pengiriman; Pembeli berhak mengonfirmasi 'completed' saat 'shipped'
+        if (!isMitraOrAdmin && !isBuyerCompleting) {
             await connection.rollback();
             (0, response_js_1.sendForbidden)(res, 'Anda tidak berwenang mengubah status pesanan ini.');
             return;
         }
+        if (order.status === status) {
+            await connection.rollback();
+            (0, response_js_1.sendSuccess)(res, {
+                order_id: Number(id),
+                status: order.status,
+                tracking_number: order.tracking_number,
+                shipping_method: order.shipping_method,
+            }, 'Status pesanan sudah sesuai.');
+            return;
+        }
+        // Validasi transisi status e-commerce
+        if (order.status === 'cancelled' || order.status === 'completed') {
+            await connection.rollback();
+            (0, response_js_1.sendBadRequest)(res, `Pesanan berstatus "${order.status}" sudah final dan tidak dapat diubah.`);
+            return;
+        }
+        if (order.status === 'pending' && ['packed', 'shipped', 'completed'].includes(status)) {
+            await connection.rollback();
+            (0, response_js_1.sendBadRequest)(res, 'Pesanan belum dibayar sehingga belum dapat dikemas, dikirim, atau diselesaikan.');
+            return;
+        }
+        if (status === 'completed' && !['shipped', 'packed'].includes(order.status)) {
+            await connection.rollback();
+            (0, response_js_1.sendBadRequest)(res, 'Pesanan harus berstatus dikirim sebelum dapat ditandai selesai.');
+            return;
+        }
         // Jika pesanan dibatalkan (cancelled), kembalikan stok produk
         if (status === 'cancelled' && order.status !== 'cancelled') {
-            const [items] = await connection.query('SELECT product_id, quantity FROM order_items WHERE order_id = ?', [id]);
+            const [items] = await connection.query('SELECT product_id, quantity, variant FROM order_items WHERE order_id = ?', [id]);
             for (const item of items) {
-                await connection.query('UPDATE products SET stock = stock + ? WHERE id = ?', [item.quantity, item.product_id]);
+                await (0, productController_js_1.adjustProductStockAndVariant)(connection, item.product_id, item.quantity, item.variant);
+            }
+            if (order.transaction_id) {
+                await connection.query("UPDATE transactions SET status = 'cancelled' WHERE id = ? AND status = 'pending'", [order.transaction_id]);
             }
         }
+        const nextTracking = tracking_number ? String(tracking_number).trim() : null;
+        const nextShippingMethod = shipping_method ? String(shipping_method).trim() : null;
         await connection.query(`UPDATE orders SET 
          status = ?,
-         tracking_number = COALESCE(?, tracking_number)
-       WHERE id = ?`, [status, tracking_number || null, id]);
+         tracking_number = COALESCE(?, tracking_number),
+         shipping_method = COALESCE(?, shipping_method)
+       WHERE id = ?`, [status, nextTracking, nextShippingMethod, id]);
         // Kirim notifikasi status terbaru ke customer
-        const statusMessages = {
-            paid: 'Pembayaran pesanan Anda telah diverifikasi.',
-            packed: 'Pesanan Anda sedang dikemas dengan rapi oleh pengrajin.',
-            shipped: `Pesanan Anda telah dikirim! No. Resi: ${tracking_number || '-'}`,
-            completed: 'Pesanan Anda telah selesai. Jangan lupa beri ulasan terbaik!',
-            cancelled: 'Pesanan Anda telah dibatalkan.',
+        const finalResi = nextTracking || order.tracking_number || '-';
+        const statusTitles = {
+            paid: 'Pembayaran Berhasil',
+            packed: 'Pesanan Sedang Dikemas',
+            shipped: 'Pesanan Sedang Dikirim',
+            completed: 'Pesanan Diterima & Selesai',
+            cancelled: 'Pesanan Dibatalkan',
         };
+        const statusMessages = {
+            paid: `Pembayaran pesanan #${id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
+            packed: `Pesanan #${id} sedang dikemas dengan rapi oleh pengrajin.`,
+            shipped: finalResi !== '-'
+                ? `Pesanan #${id} telah dikirim! No. Resi: ${finalResi}`
+                : `Pesanan #${id} telah dikirim oleh pengrajin!`,
+            completed: `Pesanan #${id} telah diterima dan selesai. Dana telah diteruskan ke penjual. Jangan lupa beri ulasan terbaik!`,
+            cancelled: `Pesanan #${id} telah dibatalkan.`,
+        };
+        const notifTitle = statusTitles[status] || `Status Pesanan #${id}: ${status.toUpperCase()}`;
         if (statusMessages[status]) {
             await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
-         VALUES (?, ?, ?, 'order', ?)`, [order.user_id, `Status Pesanan #${id}: ${status.toUpperCase()}`, statusMessages[status], id]);
+         VALUES (?, ?, ?, 'order', ?)`, [order.user_id, notifTitle, statusMessages[status], id]);
+        }
+        // Saat selesai, beri notifikasi ke mitra bahwa dana sudah masuk Saldo Aktif
+        const mitraNominal = Number(order.total_amount || 0).toLocaleString('id-ID');
+        if (status === 'completed') {
+            await connection.query(`INSERT INTO notifications (user_id, title, message, type, reference_id)
+         VALUES (?, ?, ?, 'order', ?)`, [
+                order.mitra_user_id,
+                'Dana Masuk ke Saldo Aktif!',
+                `Pesanan #${id} telah diterima pembeli. Dana sebesar Rp ${mitraNominal} kini masuk ke Saldo Aktif toko dan siap ditarik.`,
+                id,
+            ]);
         }
         // Catat ke timeline tracking (hanya jika status berubah)
         if (order.status !== status) {
             const notes = {
                 paid: 'Pembayaran terverifikasi',
                 packed: 'Penjual sedang mengemas pesanan',
-                shipped: 'Paket diserahkan ke kurir',
-                completed: 'Pesanan diterima dan selesai',
+                shipped: nextShippingMethod
+                    ? `Paket diserahkan ke kurir (${nextShippingMethod})`
+                    : 'Paket diserahkan ke kurir',
+                completed: isBuyerCompleting
+                    ? 'Pembeli mengonfirmasi pesanan diterima'
+                    : 'Pesanan diterima dan selesai',
                 cancelled: 'Pesanan dibatalkan',
             };
-            await recordOrderStatusHistory(Number(id), status, tracking_number || null, notes[status] || null, connection);
+            await recordOrderStatusHistory(Number(id), status, nextTracking || order.tracking_number || null, notes[status] || null, connection);
         }
         await connection.commit();
-        // Dorong update realtime ke HP customer (non-blocking).
+        // Dorong update realtime ke HP customer & mitra (non-blocking).
         try {
             await pusher_js_1.default.trigger(`user-${order.user_id}`, 'order-status-changed', {
                 order_id: Number(id),
                 status,
-                tracking_number: tracking_number || null,
+                title: notifTitle,
+                message: statusMessages[status] || '',
+                tracking_number: nextTracking || order.tracking_number || null,
             });
+            if (status === 'completed') {
+                await pusher_js_1.default.trigger(`user-${order.mitra_user_id}`, 'order-completed', {
+                    order_id: Number(id),
+                    status: 'completed',
+                    amount: Number(order.total_amount || 0),
+                });
+            }
         }
         catch { /* non-blocking */ }
-        // Push FCM ke HP customer (non-blocking).
+        // Push FCM ke HP customer & mitra (non-blocking).
         if (statusMessages[status]) {
-            void (0, notificationService_js_1.sendPushNotificationToUser)(order.user_id, `Status Pesanan #${id}: ${status.toUpperCase()}`, statusMessages[status], { type: 'order', route: '/profile', order_id: String(id), status });
+            void (0, notificationService_js_1.sendPushNotificationToUser)(order.user_id, notifTitle, statusMessages[status], { type: 'order', route: '/profile', order_id: String(id), status });
         }
-        (0, response_js_1.sendSuccess)(res, { order_id: Number(id), status, tracking_number }, 'Status pesanan berhasil diperbarui.');
+        if (status === 'completed') {
+            void (0, notificationService_js_1.sendPushNotificationToUser)(order.mitra_user_id, 'Dana Masuk ke Saldo Aktif!', `Pesanan #${id} selesai diterima pembeli. Rp ${mitraNominal} masuk ke Saldo Aktif.`, { type: 'order', route: '/mitra/dashboard/laporan-keuangan', order_id: String(id), status });
+        }
+        (0, response_js_1.sendSuccess)(res, {
+            order_id: Number(id),
+            status,
+            tracking_number: nextTracking || order.tracking_number || null,
+            shipping_method: nextShippingMethod || order.shipping_method || null,
+        }, 'Status pesanan berhasil diperbarui.');
     }
     catch (error) {
-        await connection.rollback();
+        await connection.rollback().catch(() => { });
         console.error('❌ [updateOrderStatus] Error:', error);
         (0, response_js_1.sendError)(res, 'Gagal memperbarui status pesanan.');
     }
@@ -439,6 +544,15 @@ const updateOrderStatus = async (req, res) => {
     }
 };
 exports.updateOrderStatus = updateOrderStatus;
+// ============================================================
+// POST /api/orders/:id/complete — Konfirmasi "Pesanan Diterima" oleh Pembeli
+// Memindahkan pendapatan pesanan dari Pendapatan Tertunda -> Saldo Aktif Mitra
+// ============================================================
+const confirmOrderCompleted = async (req, res) => {
+    req.body = { ...(req.body || {}), status: 'completed' };
+    await (0, exports.updateOrderStatus)(req, res);
+};
+exports.confirmOrderCompleted = confirmOrderCompleted;
 // Aliases
 // ============================================================
 // POST /api/orders/:id/cancel — Pembatalan oleh PEMILIK pesanan
@@ -450,9 +564,10 @@ const cancelOrderByCustomer = async (req, res) => {
         const userId = res.locals['userId'];
         const role = res.locals['role'];
         const { id } = req.params;
-        const [orders] = await connection.query(`SELECT o.*, m.user_id AS mitra_user_id
+        const [orders] = await connection.query(`SELECT o.*, m.user_id AS mitra_user_id, t.gateway_order_id
        FROM orders o
        JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN transactions t ON o.transaction_id = t.id
        WHERE o.id = ?`, [id]);
         if (orders.length === 0) {
             (0, response_js_1.sendNotFound)(res, 'Pesanan tidak ditemukan.');
@@ -471,12 +586,9 @@ const cancelOrderByCustomer = async (req, res) => {
         }
         await connection.beginTransaction();
         // Kembalikan stok produk.
-        const [items] = await connection.query('SELECT product_id, quantity FROM order_items WHERE order_id = ?', [id]);
+        const [items] = await connection.query('SELECT product_id, quantity, variant FROM order_items WHERE order_id = ?', [id]);
         for (const item of items) {
-            await connection.query('UPDATE products SET stock = stock + ? WHERE id = ?', [
-                item.quantity,
-                item.product_id,
-            ]);
+            await (0, productController_js_1.adjustProductStockAndVariant)(connection, item.product_id, item.quantity, item.variant);
         }
         await connection.query("UPDATE orders SET status = 'cancelled' WHERE id = ?", [id]);
         await connection.query("UPDATE transactions SET status = 'cancelled' WHERE id = ?", [
@@ -491,6 +603,8 @@ const cancelOrderByCustomer = async (req, res) => {
             id,
         ]);
         await connection.commit();
+        // Batalkan charge aktif di Midtrans Sandbox (best-effort agar VA/QR lama ikut invalid)
+        await (0, paymentGatewayService_js_1.cancelRemoteChargeIfAny)(order.gateway_order_id);
         try {
             await pusher_js_1.default.trigger(`user-${order.mitra_user_id}`, 'order-status-changed', {
                 order_id: Number(id),

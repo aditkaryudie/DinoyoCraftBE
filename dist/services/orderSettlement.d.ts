@@ -4,6 +4,8 @@ export interface PendingTransactionRow {
     user_id: number;
     mitra_user_id: number;
     total_amount: number;
+    amount?: number;
+    gateway_fee?: number;
     status: string;
 }
 /**
@@ -20,7 +22,8 @@ export declare function settleOrderPaid(trx: {
     status?: string;
 }): Promise<boolean>;
 /**
- * Cari transaksi berdasarkan inv_id atau payment_token (dipakai webhook).
+ * Cari transaksi berdasarkan gateway_order_id (utama) atau payment_token.
+ * Dipakai webhook Midtrans: order_id notifikasi = gateway_order_id kita.
  */
-export declare function findTransactionByRef(invId?: string, token?: string): Promise<PendingTransactionRow | null>;
+export declare function findTransactionByRef(gatewayOrderId?: string, token?: string): Promise<PendingTransactionRow | null>;
 //# sourceMappingURL=orderSettlement.d.ts.map

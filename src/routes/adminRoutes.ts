@@ -66,6 +66,13 @@ router.patch(
 router.patch('/users/:id/force-logout', adminController.forceLogoutUser);
 
 /**
+ * @route   GET /api/admin/transactions
+ * @desc    Daftar seluruh transaksi lintas toko beserta status Midtrans & paid_at
+ * @access  Admin only
+ */
+router.get('/transactions', adminController.getAdminTransactions);
+
+/**
  * @route   GET /api/admin/withdrawals?status=pending
  * @desc    Daftar pengajuan tarik saldo mitra
  * @access  Admin only

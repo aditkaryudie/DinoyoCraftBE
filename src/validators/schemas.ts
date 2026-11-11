@@ -57,6 +57,7 @@ export const checkoutOrderSchema = z.object({
 export const updateOrderStatusSchema = z.object({
   status: z.enum(['pending', 'paid', 'packed', 'shipped', 'completed', 'cancelled']),
   tracking_number: z.string().max(100).optional().nullable(),
+  shipping_method: z.string().max(100).optional().nullable(),
 });
 
 // ============================================================
@@ -176,6 +177,7 @@ export const createProductSchema = z.object({
   category_id: z.preprocess(parseCategoryInput, z.number().int().positive('Kategori produk wajib diisi')),
   weight_gram: z.coerce.number().int().min(1).default(500).optional(),
   variants: z.union([z.string(), z.array(z.any())]).optional().nullable(),
+  image_url: z.string().url('Format URL foto tidak valid').optional().or(z.literal('')).nullable(),
 });
 
 export const updateProductSchema = z.object({
@@ -241,24 +243,24 @@ export const handleDeletionActionSchema = z.object({
 
 
 // ============================================================
-// 11. Skema Payment Gateway (SociaBuzz)
+// 11. Skema Payment Gateway (Midtrans Sandbox)
 // ============================================================
-export const paymentFeesSchema = z.object({
-  country: z.string().min(1, 'Negara wajib diisi').default('Indonesia'),
-  amount: z.coerce.number().int().positive('Nominal pembayaran harus bilangan bulat > 0'),
-  username: z.string().optional(),
-});
-
-export const paymentMethodsSchema = z.object({
-  token: z.string().min(1, 'Token sesi pembayaran wajib diisi'),
-});
+export const MIDTRANS_PAYMENT_METHODS = [
+  'qris',
+  'bca_va',
+  'bni_va',
+  'bri_va',
+  'permata_va',
+  'mandiri_bill',
+  'gopay',
+  'shopeepay',
+] as const;
 
 export const createPaymentSchema = z.object({
   order_id: z.coerce.number().int().positive('ID pesanan wajib valid'),
-  payment_method: z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
-});
-
-export const directCreatePaymentSchema = z.object({
-  token: z.string().min(1, 'Token sesi pembayaran wajib diisi'),
-  payment_method: z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
+  payment_method: z
+    .enum(MIDTRANS_PAYMENT_METHODS, {
+      message: 'Metode pembayaran Midtrans tidak valid',
+    })
+    .default('qris'),
 });

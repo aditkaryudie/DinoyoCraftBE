@@ -12,7 +12,9 @@ const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
 router.use(authMiddleware_js_1.verifyToken);
 router.get('/contacts', chatController_js_1.getChatContacts);
+router.get('/unread-count', chatController_js_1.getUnreadChatCount);
 router.get('/messages/:targetUserId', chatController_js_1.getMessages);
+router.patch('/messages/:targetUserId/read', chatController_js_1.markConversationAsRead);
 router.post('/send/:targetUserId', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.sendMessageSchema), chatController_js_1.sendMessage);
 exports.default = router;
 //# sourceMappingURL=chatRoutes.js.map

@@ -45,4 +45,8 @@ export declare const getWithdrawals: (req: Request, res: Response) => Promise<vo
  * Body: { action: 'approve' | 'reject', admin_note? }
  */
 export declare const handleWithdrawalAction: (req: Request, res: Response) => Promise<void>;
+/**
+ * GET /api/admin/transactions?status=&q=&page=1&limit=50
+ */
+export declare const getAdminTransactions: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=adminController.d.ts.map

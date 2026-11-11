@@ -200,25 +200,39 @@ export interface PaymentFeeInfo {
 }
 
 export interface PaymentMethodItem {
-  id: number;
+  id: string | number;
   name: string;
   label: string;
   group?: string;
+  payment_type?: string;
   gateway?: string;
   fee?: PaymentFeeInfo;
 }
 
 export interface CreatePaymentResult {
   order_id: number;
-  transaction_id: number;
-  reference_code: string;
+  transaction_id?: number;
+  reference_code?: string;
+  gateway?: string;
+  gateway_order_id?: string | null;
   payment_method: string;
+  payment_type?: string;
   label?: string;
+  base_amount?: number;
+  service_fee?: number;
+  channel_fee?: number;
   amount: number;
+  total_pay?: number;
   fee?: PaymentFeeInfo;
   payment_url?: string | null;
   qr_string?: string | null;
-  token?: string;
-  inv_id?: string | null;
-  payment_status: 'pending' | 'paid' | 'failed' | 'expired';
+  qr_image_url?: string | null;
+  va_number?: string | null;
+  bank?: string | null;
+  biller_code?: string | null;
+  deeplink_url?: string | null;
+  expiry_time?: string | null;
+  token?: string | null;
+  reused?: boolean;
+  payment_status: 'pending' | 'paid' | 'failed' | 'expired' | 'cancelled';
 }

@@ -10,6 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.clearCart = exports.deleteCartItem = exports.updateCartItem = exports.addToCart = exports.getCart = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
 const response_js_1 = require("../utils/response.js");
+const productController_js_1 = require("./productController.js");
 const getCart = async (_req, res) => {
     try {
         const userId = res.locals['userId'];
@@ -71,18 +72,19 @@ const addToCart = async (req, res) => {
         const userId = res.locals['userId'];
         const { product_id, quantity = 1, variant = null } = req.body;
         // 1. Cek apakah produk tersedia dan aktif
-        const [products] = await database_js_1.default.query('SELECT id, name, price, stock, is_deleted FROM products WHERE id = ?', [product_id]);
+        const [products] = await database_js_1.default.query('SELECT id, name, price, stock, variants, is_deleted FROM products WHERE id = ?', [product_id]);
         if (products.length === 0 || products[0].is_deleted) {
             (0, response_js_1.sendNotFound)(res, 'Produk tidak ditemukan atau sudah tidak tersedia.');
             return;
         }
         const product = products[0];
+        const availableStock = (0, productController_js_1.getVariantAvailableStock)(product.variants, Number(product.stock) || 0, variant);
         // 2. Cek apakah produk dan varian yang sama sudah ada di keranjang
         const [existingCart] = await database_js_1.default.query('SELECT id, quantity FROM carts WHERE user_id = ? AND product_id = ? AND (variant = ? OR (variant IS NULL AND ? IS NULL))', [userId, product_id, variant, variant]);
         if (existingCart.length > 0) {
             const newQuantity = existingCart[0].quantity + quantity;
-            if (newQuantity > product.stock) {
-                (0, response_js_1.sendBadRequest)(res, `Stok produk tidak mencukupi (tersisa ${product.stock}).`);
+            if (newQuantity > availableStock) {
+                (0, response_js_1.sendBadRequest)(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
                 return;
             }
             await database_js_1.default.query('UPDATE carts SET quantity = ? WHERE id = ?', [newQuantity, existingCart[0].id]);
@@ -91,8 +93,8 @@ const addToCart = async (req, res) => {
             return;
         }
         // 3. Tambah baru ke keranjang
-        if (quantity > product.stock) {
-            (0, response_js_1.sendBadRequest)(res, `Stok produk tidak mencukupi (tersisa ${product.stock}).`);
+        if (quantity > availableStock) {
+            (0, response_js_1.sendBadRequest)(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
             return;
         }
         const [result] = await database_js_1.default.query('INSERT INTO carts (user_id, product_id, quantity, variant) VALUES (?, ?, ?, ?)', [userId, product_id, quantity, variant]);
@@ -110,7 +112,7 @@ const updateCartItem = async (req, res) => {
         const userId = res.locals['userId'];
         const { id } = req.params;
         const { quantity, variant } = req.body;
-        const [cartItem] = await database_js_1.default.query(`SELECT c.id, c.product_id, c.quantity, p.stock 
+        const [cartItem] = await database_js_1.default.query(`SELECT c.id, c.product_id, c.quantity, c.variant, p.stock, p.variants 
        FROM carts c
        JOIN products p ON c.product_id = p.id
        WHERE c.id = ? AND c.user_id = ?`, [id, userId]);
@@ -118,8 +120,10 @@ const updateCartItem = async (req, res) => {
             (0, response_js_1.sendNotFound)(res, 'Item keranjang tidak ditemukan.');
             return;
         }
-        if (quantity !== undefined && quantity > cartItem[0].stock) {
-            (0, response_js_1.sendBadRequest)(res, `Stok produk tidak mencukupi (tersisa ${cartItem[0].stock}).`);
+        const effectiveVariant = variant !== undefined ? variant : cartItem[0].variant;
+        const availableStock = (0, productController_js_1.getVariantAvailableStock)(cartItem[0].variants, Number(cartItem[0].stock) || 0, effectiveVariant);
+        if (quantity !== undefined && quantity > availableStock) {
+            (0, response_js_1.sendBadRequest)(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
             return;
         }
         await database_js_1.default.query(`UPDATE carts SET 

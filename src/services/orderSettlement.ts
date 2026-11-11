@@ -1,8 +1,7 @@
 // ============================================================
 //  src/services/orderSettlement.ts
 //  Penyelesaian pesanan: menandai pesanan LUNAS secara idempoten.
-//  Dipakai bersama oleh: webhook scbz, polling mobile, dan background poller
-//  (pengganti webhook dispatcher Go pada sidecar lama).
+//  Dipakai bersama oleh: webhook Midtrans, polling mobile, dan background poller.
 // ============================================================
 
 import pool from '../config/database.js';
@@ -15,6 +14,8 @@ export interface PendingTransactionRow {
   user_id: number;
   mitra_user_id: number;
   total_amount: number;
+  amount?: number;
+  gateway_fee?: number;
   status: string;
 }
 
@@ -33,20 +34,22 @@ export async function settleOrderPaid(trx: {
 }): Promise<boolean> {
   const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
+
     // Idempotency guard — cek ulang di dalam lock transaksi.
     const [current]: any = await connection.query(
       'SELECT status FROM transactions WHERE id = ? FOR UPDATE',
       [trx.id]
     );
     if (!current || current.length === 0 || current[0].status === 'success') {
+      await connection.rollback();
       return false;
     }
 
-    await connection.beginTransaction();
-
-    await connection.query("UPDATE transactions SET status = 'success' WHERE id = ?", [
-      trx.id,
-    ]);
+    await connection.query(
+      "UPDATE transactions SET status = 'success', paid_at = COALESCE(paid_at, NOW()) WHERE id = ?",
+      [trx.id]
+    );
 
     await connection.query("UPDATE orders SET status = 'paid' WHERE id = ?", [
       trx.order_id,
@@ -88,6 +91,8 @@ export async function settleOrderPaid(trx: {
       await pusher.trigger(`user-${trx.user_id}`, 'order-paid', {
         order_id: trx.order_id,
         status: 'paid',
+        title: 'Pembayaran Berhasil',
+        message: `Pembayaran pesanan #${trx.order_id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
       });
       await pusher.trigger(`user-${trx.mitra_user_id}`, 'new-paid-order', {
         order_id: trx.order_id,
@@ -102,13 +107,13 @@ export async function settleOrderPaid(trx: {
       trx.mitra_user_id,
       'Pembayaran Diterima!',
       `Pesanan #${trx.order_id} telah dibayar lunas sebesar Rp ${Number(trx.total_amount || 0).toLocaleString('id-ID')}. Segera proses pesanan ini.`,
-      { type: 'order', route: '/profile', order_id: String(trx.order_id) }
+      { type: 'order', route: '/profile', order_id: String(trx.order_id), status: 'paid' }
     );
     void sendPushNotificationToUser(
       trx.user_id,
       'Pembayaran Berhasil',
       `Pembayaran pesanan #${trx.order_id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
-      { type: 'order', route: '/profile', order_id: String(trx.order_id) }
+      { type: 'order', route: '/profile', order_id: String(trx.order_id), status: 'paid' }
     );
 
     console.log(`✅ [settleOrderPaid] Pesanan #${trx.order_id} ditandai LUNAS.`);
@@ -122,21 +127,22 @@ export async function settleOrderPaid(trx: {
 }
 
 /**
- * Cari transaksi berdasarkan inv_id atau payment_token (dipakai webhook).
+ * Cari transaksi berdasarkan gateway_order_id (utama) atau payment_token.
+ * Dipakai webhook Midtrans: order_id notifikasi = gateway_order_id kita.
  */
 export async function findTransactionByRef(
-  invId?: string,
+  gatewayOrderId?: string,
   token?: string
 ): Promise<PendingTransactionRow | null> {
   const [rows]: any = await pool.query(
     `SELECT t.id, o.id AS order_id, o.user_id, o.mitra_id, o.total_amount,
-            t.status, m.user_id AS mitra_user_id
+            t.amount, t.gateway_fee, t.status, m.user_id AS mitra_user_id
      FROM transactions t
      JOIN orders o ON o.transaction_id = t.id
      JOIN mitra_profiles m ON o.mitra_id = m.id
-     WHERE t.inv_id = ? OR t.payment_token = ?
+     WHERE t.gateway_order_id = ? OR t.payment_token = ?
      LIMIT 1`,
-    [invId || '', token || '']
+    [gatewayOrderId || '', token || '']
   );
   if (!rows || rows.length === 0) return null;
   const r = rows[0];
@@ -145,7 +151,9 @@ export async function findTransactionByRef(
     order_id: r.order_id,
     user_id: r.user_id,
     mitra_user_id: r.mitra_user_id,
-    total_amount: r.total_amount,
+    total_amount: Number(r.total_amount || 0),
+    amount: Number(r.amount || 0),
+    gateway_fee: Number(r.gateway_fee || 0),
     status: r.status,
   };
 }

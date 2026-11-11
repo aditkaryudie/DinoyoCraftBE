@@ -5,6 +5,11 @@ import {
   listWithdrawals,
   requestWithdrawal,
 } from '../services/walletService.js';
+import {
+  parseImageUrls,
+  parseVariants,
+  serializeVariantsInput,
+} from './productController.js';
 
 export const getDashboardMitra = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -54,12 +59,9 @@ export const getDashboardMitra = async (req: Request, res: Response): Promise<vo
       );
       totalOrders = Number(orderCountRows[0]?.total || 0);
 
-      // Hitung Saldo Aktif dari total pesanan yang tidak dibatalkan
-      const [balanceRows]: any = await pool.query(
-        "SELECT COALESCE(SUM(total_amount), 0) AS balance FROM orders WHERE mitra_id = ? AND (status IS NULL OR status != 'cancelled')",
-        [mitraId]
-      );
-      activeBalance = Number(balanceRows[0]?.balance || 0);
+      // Hitung Saldo Aktif dari wallet ledger (hanya pesanan selesai dikurangi penarikan)
+      const wallet = await getWalletSummary(mitraId);
+      activeBalance = wallet.saldo_tersedia;
 
       // Query pesanan terbaru
       const [orderRows]: any = await pool.query(
@@ -228,16 +230,26 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
     }
     const mitraId = mitra.id;
 
-    // Cari pesanan milik mitra ini
+    // Cari pesanan milik mitra ini beserta info pembayaran Midtrans
     const [orderRows]: any = await pool.query(
       `SELECT 
         o.id,
         o.created_at,
         o.status,
         o.total_amount,
-        COALESCE(u.name, 'Customer') AS customer_name
+        o.shipping_method,
+        o.tracking_number,
+        COALESCE(u.name, 'Customer') AS customer_name,
+        t.transaction_type AS payment_method,
+        t.payment_type,
+        t.bank,
+        t.gateway,
+        t.status AS payment_status,
+        t.paid_at,
+        t.expiry_time
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.id
+      LEFT JOIN transactions t ON o.transaction_id = t.id
       WHERE o.mitra_id = ?
       ORDER BY o.created_at DESC`,
       [mitraId]
@@ -271,10 +283,26 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
       if (!itemsByOrder[item.order_id]) {
         itemsByOrder[item.order_id] = [];
       }
+      let firstImage: string | undefined;
+      if (Array.isArray(item.image_urls) && item.image_urls.length > 0) {
+        firstImage = String(item.image_urls[0]);
+      } else if (typeof item.image_urls === 'string' && item.image_urls.trim()) {
+        try {
+          const parsed = JSON.parse(item.image_urls);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            firstImage = String(parsed[0]);
+          } else {
+            firstImage = item.image_urls.trim();
+          }
+        } catch {
+          firstImage = item.image_urls.trim();
+        }
+      }
       itemsByOrder[item.order_id].push({
         productName: item.product_name,
         quantity: item.quantity,
-        price: Number(item.unit_price)
+        price: Number(item.unit_price),
+        image: firstImage,
       });
     }
 
@@ -283,11 +311,21 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
       const orderDate = order.created_at ? new Date(order.created_at) : new Date();
       const dateStr = orderDate.toISOString().split('T')[0].replace(/-/g, '');
       return {
+        id: order.id,
         orderId: `ORD-${dateStr}-00${order.id}`,
         tanggal: order.created_at,
         customerName: order.customer_name || 'Customer',
         status: order.status,
         totalBelanja: Number(order.total_amount || 0),
+        kurir: order.shipping_method || undefined,
+        resi: order.tracking_number || undefined,
+        payment_method: order.payment_method || null,
+        payment_type: order.payment_type || null,
+        bank: order.bank || null,
+        gateway: order.gateway || 'midtrans',
+        payment_status: order.payment_status || 'pending',
+        paid_at: order.paid_at || null,
+        expiry_time: order.expiry_time || null,
         items: itemsByOrder[order.id] || []
       };
     });
@@ -303,7 +341,7 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
 export const updateProduct = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params; // ID produk dari URL
-    const { name, title, price, stock, category_id, description } = req.body;
+    const { name, title, price, stock, category_id, description, variants, weight_gram } = req.body;
     const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
 
     if (!userId) {
@@ -339,8 +377,27 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
     // Dapatkan data update (dukung 'name' atau 'title')
     const updatedName = name !== undefined ? name : (title !== undefined ? title : existingProduct.name);
     const updatedPrice = price !== undefined ? parseFloat(price) : existingProduct.price;
-    const updatedStock = stock !== undefined ? parseInt(stock) : existingProduct.stock;
     const updatedDesc = description !== undefined ? description : existingProduct.description;
+    const updatedWeight = weight_gram !== undefined
+      ? Math.max(1, parseInt(weight_gram, 10) || 500)
+      : (Number(existingProduct.weight_gram) || 500);
+
+    let updatedVariantsJson: string | null;
+    let updatedStock: number;
+    if (variants !== undefined) {
+      const normalized = serializeVariantsInput(variants);
+      if (normalized && normalized.length > 0) {
+        updatedVariantsJson = JSON.stringify(normalized);
+        updatedStock = normalized.reduce((sum, v) => sum + v.stock, 0);
+      } else {
+        updatedVariantsJson = null;
+        updatedStock = stock !== undefined ? Math.max(0, parseInt(stock, 10) || 0) : Number(existingProduct.stock) || 0;
+      }
+    } else {
+      const existingNormalized = serializeVariantsInput(existingProduct.variants);
+      updatedVariantsJson = existingNormalized ? JSON.stringify(existingNormalized) : null;
+      updatedStock = stock !== undefined ? Math.max(0, parseInt(stock, 10) || 0) : Number(existingProduct.stock) || 0;
+    }
 
     let updatedCategoryId = existingProduct.category_id;
     if (category_id !== undefined) {
@@ -358,17 +415,21 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
     // Lakukan update ke database
     await pool.query(
       `UPDATE products 
-       SET name = ?, description = ?, price = ?, stock = ?, category_id = ?, updated_at = NOW() 
+       SET name = ?, description = ?, price = ?, stock = ?, weight_gram = ?, variants = ?, category_id = ?, updated_at = NOW() 
        WHERE id = ? AND mitra_id = ?`,
-      [updatedName, updatedDesc, updatedPrice, updatedStock, updatedCategoryId, id, mitraId]
+      [updatedName, updatedDesc, updatedPrice, updatedStock, updatedWeight, updatedVariantsJson, updatedCategoryId, id, mitraId]
     );
 
     const [updatedRows]: any = await pool.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
+    const saved = updatedRows && updatedRows.length > 0 ? updatedRows[0] : existingProduct;
 
     res.json({
       success: true,
       message: 'Produk berhasil diperbarui!',
-      data: updatedRows && updatedRows.length > 0 ? updatedRows[0] : existingProduct
+      data: {
+        ...saved,
+        variants: parseVariants(saved.variants),
+      }
     });
   } catch (error) {
     console.error('Error update product:', error);
@@ -403,7 +464,9 @@ export const getPublicMitraStores = async (req: Request, res: Response): Promise
           WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
           ELSE NULL 
         END AS image,
-        (SELECT COUNT(*) FROM products p WHERE p.mitra_id = m.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products
+        (SELECT COUNT(*) FROM products p WHERE p.mitra_id = m.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products,
+        COALESCE((SELECT ROUND(AVG(r.rating), 1) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS avg_rating,
+        COALESCE((SELECT COUNT(*) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS total_reviews
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id
       WHERE (m.is_active = 1 OR m.is_active IS NULL)
@@ -416,10 +479,15 @@ export const getPublicMitraStores = async (req: Request, res: Response): Promise
     query += ' ORDER BY m.id DESC';
 
     const [rows]: any = await pool.query(query, params);
-    const stores = rows.map((r: any) => ({
-      ...r,
-      rating: 4.9,
-    }));
+    const stores = rows.map((r: any) => {
+      const totalReviews = Number(r.total_reviews) || 0;
+      const rating = totalReviews > 0 ? Number(r.avg_rating) || 0 : 0;
+      return {
+        ...r,
+        total_reviews: totalReviews,
+        rating,
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -459,7 +527,9 @@ export const getPublicMitraDetail = async (req: Request, res: Response): Promise
           WHEN m.avatar_url IS NOT NULL AND m.avatar_url != '' AND m.avatar_url NOT LIKE '%googleusercontent.com%' AND m.avatar_url NOT LIKE '%google.com%' THEN m.avatar_url
           WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
           ELSE NULL 
-        END AS image
+        END AS image,
+        COALESCE((SELECT ROUND(AVG(r.rating), 1) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS avg_rating,
+        COALESCE((SELECT COUNT(*) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS total_reviews
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id
       WHERE m.id = ?
@@ -472,7 +542,12 @@ export const getPublicMitraDetail = async (req: Request, res: Response): Promise
       return;
     }
 
-    const store = { ...stores[0], rating: 4.9 };
+    const totalStoreReviews = Number(stores[0].total_reviews) || 0;
+    const store = {
+      ...stores[0],
+      total_reviews: totalStoreReviews,
+      rating: totalStoreReviews > 0 ? Number(stores[0].avg_rating) || 0 : 0,
+    };
 
     const [products]: any = await pool.query(
       `SELECT 
@@ -481,8 +556,19 @@ export const getPublicMitraDetail = async (req: Request, res: Response): Promise
         p.description,
         p.price,
         p.stock,
+        p.weight_gram,
+        p.variants,
         p.image_urls,
-        c.name AS category
+        p.rating,
+        p.total_reviews,
+        COALESCE(c.name, 'Keramik') AS category,
+        COALESCE(
+          (SELECT SUM(oi.quantity)
+           FROM order_items oi
+           JOIN orders o ON oi.order_id = o.id
+           WHERE oi.product_id = p.id AND o.status != 'cancelled'),
+          0
+        ) AS sold_count
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       WHERE p.mitra_id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
@@ -491,23 +577,30 @@ export const getPublicMitraDetail = async (req: Request, res: Response): Promise
     );
 
     const formattedProducts = products.map((p: any) => {
-      let img = '';
-      if (p.image_urls) {
-        try {
-          const parsed = typeof p.image_urls === 'string' ? JSON.parse(p.image_urls) : p.image_urls;
-          img = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : '';
-        } catch {
-          img = String(p.image_urls);
-        }
-      }
+      const imageUrls = parseImageUrls(p.image_urls);
+      const img = imageUrls.length > 0 ? imageUrls[0] : '';
+      const totalReviews = Number(p.total_reviews) || 0;
+      const rating = totalReviews > 0 ? Number(p.rating) || 0 : 0;
       return {
         id: String(p.id),
+        mitra_id: Number(id),
         name: p.name,
+        title: p.name,
+        description: p.description || '',
         price: Number(p.price),
         stock: Number(p.stock),
+        weight_gram: Number(p.weight_gram) || 500,
+        variants: parseVariants(p.variants),
         category: p.category || 'Keramik',
+        studio: store.store_name || store.name || 'Toko Keramik',
+        store_name: store.store_name || store.name || 'Toko Keramik',
+        workshop_address: store.workshop_address,
+        rating,
+        total_reviews: totalReviews,
+        sold_count: Number(p.sold_count) || 0,
         image: img,
         image_url: img,
+        images: imageUrls,
       };
     });
 

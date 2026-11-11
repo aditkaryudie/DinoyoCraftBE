@@ -4,7 +4,7 @@
 //  Skema Validasi Zod Komprehensif untuk Seluruh REST API DinoyoCraft
 // ============================================================
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.directCreatePaymentSchema = exports.createPaymentSchema = exports.paymentMethodsSchema = exports.paymentFeesSchema = exports.handleDeletionActionSchema = exports.handleReportActionSchema = exports.aiAnalysisSchema = exports.verifyMitraStoreSchema = exports.createMasterDataSchema = exports.updateUserStatusSchema = exports.sendMessageSchema = exports.updateProductSchema = exports.createProductSchema = exports.updateProfileSchema = exports.resetPasswordSchema = exports.verifyOtpSchema = exports.forgotPasswordSchema = exports.googleLoginSchema = exports.loginSchema = exports.registerMitraSchema = exports.replyReviewSchema = exports.createReviewSchema = exports.updateOrderStatusSchema = exports.checkoutOrderSchema = exports.checkoutItemSchema = exports.updateCartSchema = exports.addToCartSchema = exports.updateAddressSchema = exports.createAddressSchema = void 0;
+exports.createPaymentSchema = exports.MIDTRANS_PAYMENT_METHODS = exports.handleDeletionActionSchema = exports.handleReportActionSchema = exports.aiAnalysisSchema = exports.verifyMitraStoreSchema = exports.createMasterDataSchema = exports.updateUserStatusSchema = exports.sendMessageSchema = exports.updateProductSchema = exports.createProductSchema = exports.updateProfileSchema = exports.resetPasswordSchema = exports.verifyOtpSchema = exports.forgotPasswordSchema = exports.googleLoginSchema = exports.loginSchema = exports.registerMitraSchema = exports.replyReviewSchema = exports.createReviewSchema = exports.updateOrderStatusSchema = exports.checkoutOrderSchema = exports.checkoutItemSchema = exports.updateCartSchema = exports.addToCartSchema = exports.updateAddressSchema = exports.createAddressSchema = void 0;
 const zod_1 = require("zod");
 // ============================================================
 // 1. Skema Alamat Pengiriman (User Addresses)
@@ -52,6 +52,7 @@ exports.checkoutOrderSchema = zod_1.z.object({
 exports.updateOrderStatusSchema = zod_1.z.object({
     status: zod_1.z.enum(['pending', 'paid', 'packed', 'shipped', 'completed', 'cancelled']),
     tracking_number: zod_1.z.string().max(100).optional().nullable(),
+    shipping_method: zod_1.z.string().max(100).optional().nullable(),
 });
 // ============================================================
 // 4. Skema Ulasan Produk (Reviews)
@@ -165,6 +166,7 @@ exports.createProductSchema = zod_1.z.object({
     category_id: zod_1.z.preprocess(parseCategoryInput, zod_1.z.number().int().positive('Kategori produk wajib diisi')),
     weight_gram: zod_1.z.coerce.number().int().min(1).default(500).optional(),
     variants: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.any())]).optional().nullable(),
+    image_url: zod_1.z.string().url('Format URL foto tidak valid').optional().or(zod_1.z.literal('')).nullable(),
 });
 exports.updateProductSchema = zod_1.z.object({
     name: zod_1.z.string().min(2).max(200).optional(),
@@ -220,22 +222,24 @@ exports.handleDeletionActionSchema = zod_1.z.object({
     action: zod_1.z.enum(['approved', 'rejected']),
 });
 // ============================================================
-// 11. Skema Payment Gateway (SociaBuzz)
+// 11. Skema Payment Gateway (Midtrans Sandbox)
 // ============================================================
-exports.paymentFeesSchema = zod_1.z.object({
-    country: zod_1.z.string().min(1, 'Negara wajib diisi').default('Indonesia'),
-    amount: zod_1.z.coerce.number().int().positive('Nominal pembayaran harus bilangan bulat > 0'),
-    username: zod_1.z.string().optional(),
-});
-exports.paymentMethodsSchema = zod_1.z.object({
-    token: zod_1.z.string().min(1, 'Token sesi pembayaran wajib diisi'),
-});
+exports.MIDTRANS_PAYMENT_METHODS = [
+    'qris',
+    'bca_va',
+    'bni_va',
+    'bri_va',
+    'permata_va',
+    'mandiri_bill',
+    'gopay',
+    'shopeepay',
+];
 exports.createPaymentSchema = zod_1.z.object({
     order_id: zod_1.z.coerce.number().int().positive('ID pesanan wajib valid'),
-    payment_method: zod_1.z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
-});
-exports.directCreatePaymentSchema = zod_1.z.object({
-    token: zod_1.z.string().min(1, 'Token sesi pembayaran wajib diisi'),
-    payment_method: zod_1.z.string().min(1, 'Metode pembayaran wajib diisi').default('qris'),
+    payment_method: zod_1.z
+        .enum(exports.MIDTRANS_PAYMENT_METHODS, {
+        message: 'Metode pembayaran Midtrans tidak valid',
+    })
+        .default('qris'),
 });
 //# sourceMappingURL=schemas.js.map

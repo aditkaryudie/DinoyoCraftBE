@@ -29,7 +29,7 @@ const startServer = async (): Promise<void> => {
   });
   console.log('✅ AI Settings table synced and ready.');
 
-  // Background poller pembayaran SociaBuzz (pengganti dispatcher Go scbz).
+  // Background poller pembayaran Midtrans (cadangan sinkronisasi status + auto-expire).
   startPaymentPoller();
 
   const server = app.listen(Number(PORT), '0.0.0.0', () => {

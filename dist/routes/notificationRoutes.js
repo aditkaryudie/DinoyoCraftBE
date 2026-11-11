@@ -11,6 +11,7 @@ const router = (0, express_1.Router)();
 // Semua rute notifikasi wajib login
 router.use(authMiddleware_js_1.verifyToken);
 router.get('/', notificationController_js_1.getUserNotifications);
+router.get('/unread-count', notificationController_js_1.getUnreadNotificationCount);
 router.patch('/read-all', notificationController_js_1.markAllAsRead);
 router.patch('/:id/read', notificationController_js_1.markAsRead);
 router.delete('/:id', notificationController_js_1.deleteNotification);

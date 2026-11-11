@@ -43,6 +43,9 @@ export const apiLimiter = rateLimit({
   limit: 500,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
+  // Kecualikan webhook Midtrans agar callback server-to-server tidak pernah kena rate limit (PRD §5.4)
+  skip: (req) =>
+    req.path === '/payments/webhook' || req.originalUrl.startsWith('/api/payments/webhook'),
   message: {
     success: false,
     message: 'Terlalu banyak permintaan dari IP ini, silakan coba lagi setelah 15 menit.',

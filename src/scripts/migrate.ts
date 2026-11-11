@@ -134,6 +134,14 @@ const tables = [
     \`payment_url\` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`qr_string\` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`gateway_fee\` decimal(15,2) NOT NULL DEFAULT '0.00',
+    \`gateway\` varchar(30) NOT NULL DEFAULT 'midtrans',
+    \`gateway_order_id\` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`payment_type\` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`va_number\` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`bank\` varchar(30) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`expiry_time\` datetime DEFAULT NULL,
+    \`paid_at\` datetime DEFAULT NULL,
+    \`gateway_response\` json DEFAULT NULL,
     \`notes\` text COLLATE utf8mb4_unicode_ci,
     \`proof_image_url\` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -472,6 +480,20 @@ const runMigration = async () => {
     await ensureColumn('transactions', 'payment_url', 'VARCHAR(500) NULL AFTER inv_id');
     await ensureColumn('transactions', 'qr_string', 'TEXT NULL AFTER payment_url');
     await ensureColumn('transactions', 'gateway_fee', 'DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER qr_string');
+
+    // Kolom Midtrans (PRD_Midtrans_Sandbox §5.1)
+    await ensureColumn('transactions', 'gateway', "VARCHAR(30) NOT NULL DEFAULT 'midtrans' AFTER gateway_fee");
+    await ensureColumn('transactions', 'gateway_order_id', 'VARCHAR(100) NULL AFTER gateway');
+    await ensureColumn('transactions', 'payment_type', 'VARCHAR(50) NULL AFTER gateway_order_id');
+    await ensureColumn('transactions', 'va_number', 'VARCHAR(50) NULL AFTER payment_type');
+    await ensureColumn('transactions', 'bank', 'VARCHAR(30) NULL AFTER va_number');
+    await ensureColumn('transactions', 'expiry_time', 'DATETIME NULL AFTER bank');
+    await ensureColumn('transactions', 'paid_at', 'DATETIME NULL AFTER expiry_time');
+    await ensureColumn('transactions', 'gateway_response', 'JSON NULL AFTER paid_at');
+    // gateway_order_id unik (multiple NULL diizinkan MySQL)
+    try {
+      await db.query('ALTER TABLE `transactions` ADD UNIQUE KEY `uq_gateway_order_id` (`gateway_order_id`)');
+    } catch { /* sudah ada */ }
 
     await ensureColumn('users', 'phone', "VARCHAR(20) NULL AFTER email");
     await ensureColumn('users', 'birth_date', 'DATE NULL AFTER phone');

@@ -413,3 +413,129 @@ export const handleWithdrawalAction = async (req: Request, res: Response): Promi
     sendError(res, err.message || 'Gagal memproses pengajuan.', err.status || 500);
   }
 };
+
+// ============================================================
+// TRANSAKSI LINTAS TOKO — daftar transaksi nyata (Midtrans + DB)
+// ============================================================
+
+/**
+ * GET /api/admin/transactions?status=&q=&page=1&limit=50
+ */
+export const getAdminTransactions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const statusFilter = String(req.query['status'] || '').trim().toLowerCase();
+    const search = String(req.query['q'] || '').trim();
+    const page = Math.max(1, Number(req.query['page'] || 1));
+    const limit = Math.min(200, Math.max(1, Number(req.query['limit'] || 50)));
+    const offset = (page - 1) * limit;
+
+    const whereParts: string[] = ['o.id IS NOT NULL'];
+    const params: any[] = [];
+
+    if (statusFilter && statusFilter !== 'semua' && statusFilter !== 'all') {
+      if (statusFilter === 'failed') {
+        whereParts.push("t.status IN ('failed', 'cancelled')");
+      } else if (statusFilter === 'success' || statusFilter === 'paid') {
+        whereParts.push("t.status = 'success'");
+      } else if (statusFilter === 'pending') {
+        whereParts.push("t.status = 'pending'");
+      } else if (statusFilter === 'cancelled' || statusFilter === 'expired') {
+        whereParts.push("t.status IN ('failed', 'cancelled')");
+      }
+    }
+
+    if (search) {
+      whereParts.push(
+        '(t.reference_code LIKE ? OR t.gateway_order_id LIKE ? OR m.store_name LIKE ? OR u.name LIKE ?)'
+      );
+      const pattern = `%${search}%`;
+      params.push(pattern, pattern, pattern, pattern);
+    }
+
+    const whereClause = `WHERE ${whereParts.join(' AND ')}`;
+
+    const [countRows]: any = await pool.query(
+      `SELECT COUNT(*) AS total
+       FROM transactions t
+       LEFT JOIN orders o ON o.transaction_id = t.id
+       LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN users u ON o.user_id = u.id
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countRows?.[0]?.total ?? 0);
+
+    const [rows]: any = await pool.query(
+      `SELECT
+         t.id,
+         t.reference_code,
+         t.gateway,
+         t.gateway_order_id,
+         t.transaction_type AS payment_method,
+         t.payment_type,
+         t.bank,
+         t.amount AS base_amount,
+         t.gateway_fee,
+         t.status AS payment_status,
+         t.paid_at,
+         t.expiry_time,
+         t.created_at,
+         o.id AS order_id,
+         o.status AS order_status,
+         m.store_name,
+         u.name AS customer_name,
+         u.email AS customer_email
+       FROM transactions t
+       LEFT JOIN orders o ON o.transaction_id = t.id
+       LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN users u ON o.user_id = u.id
+       ${whereClause}
+       ORDER BY t.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    const transactions = (rows || []).map((r: any) => {
+      const baseAmount = Number(r.base_amount || 0);
+      const gatewayFee = Number(r.gateway_fee || 0);
+      return {
+        id: r.reference_code || `TRX-${r.id}`,
+        transaction_id: r.id,
+        order_id: r.order_id,
+        reference_code: r.reference_code,
+        gateway: r.gateway || 'midtrans',
+        gateway_order_id: r.gateway_order_id || null,
+        store: r.store_name || '-',
+        customer: r.customer_name || 'Customer',
+        customer_email: r.customer_email || null,
+        payment_method: r.payment_method || '-',
+        payment_type: r.payment_type || null,
+        bank: r.bank || null,
+        base_amount: baseAmount,
+        gateway_fee: gatewayFee,
+        amount: baseAmount + gatewayFee,
+        status: r.payment_status === 'cancelled' ? 'failed' : r.payment_status,
+        raw_status: r.payment_status,
+        order_status: r.order_status,
+        paid_at: r.paid_at,
+        expiry_time: r.expiry_time,
+        date: r.paid_at || r.created_at,
+      };
+    });
+
+    sendSuccess(
+      res,
+      transactions,
+      'Daftar transaksi berhasil diambil.',
+      200,
+      {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      }
+    );
+  } catch (err) {
+    sendError(res, 'Gagal mengambil daftar transaksi.', 500, String(err));
+  }
+};

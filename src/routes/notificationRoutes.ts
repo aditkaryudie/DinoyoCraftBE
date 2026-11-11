@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import {
   getUserNotifications,
+  getUnreadNotificationCount,
   markAsRead,
   markAllAsRead,
   deleteNotification,
@@ -18,6 +19,7 @@ const router = Router();
 router.use(verifyToken);
 
 router.get('/', getUserNotifications);
+router.get('/unread-count', getUnreadNotificationCount);
 router.patch('/read-all', markAllAsRead);
 router.patch('/:id/read', markAsRead);
 router.delete('/:id', deleteNotification);

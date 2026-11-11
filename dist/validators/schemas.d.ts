@@ -56,6 +56,7 @@ export declare const updateOrderStatusSchema: z.ZodObject<{
         shipped: "shipped";
     }>;
     tracking_number: z.ZodNullable<z.ZodOptional<z.ZodString>>;
+    shipping_method: z.ZodNullable<z.ZodOptional<z.ZodString>>;
 }, z.core.$strip>;
 export declare const createReviewSchema: z.ZodObject<{
     product_id: z.ZodCoercedNumber<unknown>;
@@ -139,6 +140,7 @@ export declare const createProductSchema: z.ZodObject<{
     category_id: z.ZodPreprocess<z.ZodNumber, unknown>;
     weight_gram: z.ZodOptional<z.ZodDefault<z.ZodCoercedNumber<unknown>>>;
     variants: z.ZodNullable<z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodArray<z.ZodAny>]>>>;
+    image_url: z.ZodNullable<z.ZodUnion<[z.ZodOptional<z.ZodString>, z.ZodLiteral<"">]>>;
 }, z.core.$strip>;
 export declare const updateProductSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
@@ -196,20 +198,18 @@ export declare const handleDeletionActionSchema: z.ZodObject<{
         rejected: "rejected";
     }>;
 }, z.core.$strip>;
-export declare const paymentFeesSchema: z.ZodObject<{
-    country: z.ZodDefault<z.ZodString>;
-    amount: z.ZodCoercedNumber<unknown>;
-    username: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>;
-export declare const paymentMethodsSchema: z.ZodObject<{
-    token: z.ZodString;
-}, z.core.$strip>;
+export declare const MIDTRANS_PAYMENT_METHODS: readonly ['qris', 'bca_va', 'bni_va', 'bri_va', 'permata_va', 'mandiri_bill', 'gopay', 'shopeepay'];
 export declare const createPaymentSchema: z.ZodObject<{
     order_id: z.ZodCoercedNumber<unknown>;
-    payment_method: z.ZodDefault<z.ZodString>;
-}, z.core.$strip>;
-export declare const directCreatePaymentSchema: z.ZodObject<{
-    token: z.ZodString;
-    payment_method: z.ZodDefault<z.ZodString>;
+    payment_method: z.ZodDefault<z.ZodEnum<{
+        bca_va: "bca_va";
+        bni_va: "bni_va";
+        bri_va: "bri_va";
+        gopay: "gopay";
+        mandiri_bill: "mandiri_bill";
+        permata_va: "permata_va";
+        qris: "qris";
+        shopeepay: "shopeepay";
+    }>>;
 }, z.core.$strip>;
 //# sourceMappingURL=schemas.d.ts.map

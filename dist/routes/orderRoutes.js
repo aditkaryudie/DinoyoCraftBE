@@ -21,6 +21,7 @@ router.get('/mitra', (0, authMiddleware_js_1.requireRole)(['mitra', 'admin']), o
 router.get('/:id', orderController_js_1.getOrderById);
 router.get('/:id/tracking', orderController_js_1.getOrderTracking);
 router.post('/:id/cancel', orderController_js_1.cancelOrderByCustomer);
+router.post('/:id/complete', orderController_js_1.confirmOrderCompleted);
 router.patch('/:id/status', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateOrderStatusSchema), orderController_js_1.updateOrderStatus);
 exports.default = router;
 //# sourceMappingURL=orderRoutes.js.map

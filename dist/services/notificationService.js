@@ -20,20 +20,46 @@ const sendPushNotificationToUser = async (userId, title, body, dataPayload = {})
         const tokens = rows.map((r) => r.fcm_token).filter(Boolean);
         if (tokens.length === 0)
             return;
-        // 2. Kirim multicast pesan FCM
+        // Pastikan data payload seluruhnya string dan memuat title/body untuk handler Android/Flutter
+        const normalizedData = {
+            title,
+            body,
+            ...Object.fromEntries(Object.entries(dataPayload).map(([k, v]) => [k, String(v ?? '')])),
+        };
+        // 2. Kirim multicast pesan FCM dengan channel high-importance Android
         const messaging = (0, messaging_1.getMessaging)();
         const response = await messaging.sendEachForMulticast({
             tokens,
             notification: { title, body },
-            data: dataPayload,
+            data: normalizedData,
             android: {
                 priority: 'high',
                 notification: {
+                    channelId: 'dinoyocraft_channel',
                     sound: 'default',
+                    defaultSound: true,
+                    visibility: 'public',
                 },
             },
         });
-        console.log(`[FCM] Notifikasi dikirim ke User ${userId}: ${response.successCount} berhasil, ${response.failureCount} gagal.`);
+        // Bersihkan token yang sudah kedaluwarsa / tidak terdaftar
+        const staleTokens = [];
+        response.responses.forEach((resp, idx) => {
+            if (!resp.success && resp.error) {
+                const code = resp.error.code;
+                if (code === 'messaging/registration-token-not-registered' ||
+                    code === 'messaging/invalid-registration-token') {
+                    staleTokens.push(tokens[idx]);
+                }
+                else {
+                    console.warn(`[FCM] Gagal kirim ke token[${idx}] User ${userId}: ${code} - ${resp.error.message}`);
+                }
+            }
+        });
+        if (staleTokens.length > 0) {
+            await database_js_1.default.query('DELETE FROM user_device_tokens WHERE user_id = ? AND fcm_token IN (?)', [userId, staleTokens]).catch(() => { });
+        }
+        console.log(`[FCM] Notifikasi dikirim ke User ${userId}: ${response.successCount} berhasil, ${response.failureCount} gagal (${staleTokens.length} token usang dihapus).`);
     }
     catch (err) {
         console.error('[FCM] Gagal mengirim push notification:', err);

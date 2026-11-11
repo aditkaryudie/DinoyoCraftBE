@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
+import { parseImageUrls, parseVariants } from './productController.js';
 
 export const getStoreProfile = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -54,8 +55,14 @@ export const getStoreProfile = async (req: Request, res: Response): Promise<void
       `SELECT 
         id,
         name,
+        description,
         price,
+        stock,
+        weight_gram,
+        variants,
         image_urls,
+        rating,
+        total_reviews,
         created_at
       FROM products
       WHERE mitra_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
@@ -64,33 +71,40 @@ export const getStoreProfile = async (req: Request, res: Response): Promise<void
     );
 
     const products = productRows.map((p: any) => {
-      let imageUrl = null;
-      if (p.image_urls) {
-        try {
-          const parsed = typeof p.image_urls === 'string' ? JSON.parse(p.image_urls) : p.image_urls;
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            imageUrl = parsed[0];
-          } else if (typeof parsed === 'string') {
-            imageUrl = parsed;
-          }
-        } catch {
-          imageUrl = String(p.image_urls);
-        }
-      }
+      const imageUrls = parseImageUrls(p.image_urls);
+      let imageUrl: string | null = imageUrls.length > 0 ? imageUrls[0] : null;
 
       if (imageUrl && !imageUrl.startsWith('http')) {
         imageUrl = `http://localhost:5000${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
       }
 
+      const totalReviews = Number(p.total_reviews) || 0;
+      const rating = totalReviews > 0 ? Number(p.rating) || 0 : 0;
+
       return {
         id: p.id,
         name: p.name,
+        description: p.description || '',
         price: Number(p.price),
-        imageUrl: imageUrl,
-        isHot: true,
-        rating: 4.9,
+        stock: Number(p.stock),
+        weight_gram: Number(p.weight_gram) || 500,
+        variants: parseVariants(p.variants),
+        imageUrl,
+        isHot: false,
+        rating,
+        total_reviews: totalReviews,
       };
     });
+
+    const [revStats]: any = await pool.query(
+      `SELECT COALESCE(ROUND(AVG(r.rating), 1), 0) AS avg_rating, COUNT(*) AS total_reviews
+       FROM reviews r
+       JOIN products p ON r.product_id = p.id
+       WHERE p.mitra_id = ?`,
+      [store.id]
+    );
+    const storeTotalReviews = Number(revStats?.[0]?.total_reviews) || 0;
+    const storeRating = storeTotalReviews > 0 ? Number(revStats?.[0]?.avg_rating) || 0 : 0;
 
     res.status(200).json({
       success: true,
@@ -101,8 +115,8 @@ export const getStoreProfile = async (req: Request, res: Response): Promise<void
           description: store.description || 'Belum ada deskripsi toko.',
           avatarUrl: avatarUrl,
           bannerUrl: bannerUrl,
-          rating: 4.9,
-          reviewCount: 128,
+          rating: storeRating,
+          reviewCount: storeTotalReviews,
         },
         products: products,
       },

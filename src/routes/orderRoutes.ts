@@ -10,6 +10,7 @@ import {
   getOrderById,
   getOrderTracking,
   cancelOrderByCustomer,
+  confirmOrderCompleted,
   getMitraOrders,
   updateOrderStatus,
 } from '../controllers/orderController.js';
@@ -33,6 +34,7 @@ router.get('/mitra', requireRole(['mitra', 'admin']), getMitraOrders);
 router.get('/:id', getOrderById);
 router.get('/:id/tracking', getOrderTracking);
 router.post('/:id/cancel', cancelOrderByCustomer);
+router.post('/:id/complete', confirmOrderCompleted);
 router.patch('/:id/status', validateZod(updateOrderStatusSchema), updateOrderStatus);
 
 export default router;

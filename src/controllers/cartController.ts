@@ -6,6 +6,7 @@
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendError } from '../utils/response.js';
+import { getVariantAvailableStock } from './productController.js';
 
 export const getCart = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -74,7 +75,7 @@ export const addToCart = async (req: Request, res: Response): Promise<void> => {
 
     // 1. Cek apakah produk tersedia dan aktif
     const [products]: any = await pool.query(
-      'SELECT id, name, price, stock, is_deleted FROM products WHERE id = ?',
+      'SELECT id, name, price, stock, variants, is_deleted FROM products WHERE id = ?',
       [product_id]
     );
 
@@ -84,6 +85,7 @@ export const addToCart = async (req: Request, res: Response): Promise<void> => {
     }
 
     const product = products[0];
+    const availableStock = getVariantAvailableStock(product.variants, Number(product.stock) || 0, variant);
 
     // 2. Cek apakah produk dan varian yang sama sudah ada di keranjang
     const [existingCart]: any = await pool.query(
@@ -93,8 +95,8 @@ export const addToCart = async (req: Request, res: Response): Promise<void> => {
 
     if (existingCart.length > 0) {
       const newQuantity = existingCart[0].quantity + quantity;
-      if (newQuantity > product.stock) {
-        sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${product.stock}).`);
+      if (newQuantity > availableStock) {
+        sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
         return;
       }
 
@@ -105,8 +107,8 @@ export const addToCart = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 3. Tambah baru ke keranjang
-    if (quantity > product.stock) {
-      sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${product.stock}).`);
+    if (quantity > availableStock) {
+      sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
       return;
     }
 
@@ -130,7 +132,7 @@ export const updateCartItem = async (req: Request, res: Response): Promise<void>
     const { quantity, variant } = req.body;
 
     const [cartItem]: any = await pool.query(
-      `SELECT c.id, c.product_id, c.quantity, p.stock 
+      `SELECT c.id, c.product_id, c.quantity, c.variant, p.stock, p.variants 
        FROM carts c
        JOIN products p ON c.product_id = p.id
        WHERE c.id = ? AND c.user_id = ?`,
@@ -142,8 +144,10 @@ export const updateCartItem = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    if (quantity !== undefined && quantity > cartItem[0].stock) {
-      sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${cartItem[0].stock}).`);
+    const effectiveVariant = variant !== undefined ? variant : cartItem[0].variant;
+    const availableStock = getVariantAvailableStock(cartItem[0].variants, Number(cartItem[0].stock) || 0, effectiveVariant);
+    if (quantity !== undefined && quantity > availableStock) {
+      sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
       return;
     }
 

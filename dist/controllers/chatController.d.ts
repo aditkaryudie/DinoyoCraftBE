@@ -15,4 +15,14 @@ export declare const getChatHistory: typeof getMessages;
  * GET /api/chat/contacts
  */
 export declare const getChatContacts: (req: Request, res: Response) => Promise<void>;
+/**
+ * Mengambil total jumlah pesan belum dibaca untuk user yang sedang login.
+ * GET /api/chat/unread-count
+ */
+export declare const getUnreadChatCount: (req: Request, res: Response) => Promise<void>;
+/**
+ * Menandai pesan dari targetUserId kepada user login sebagai sudah dibaca.
+ * PATCH /api/chat/messages/:targetUserId/read
+ */
+export declare const markConversationAsRead: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=chatController.d.ts.map
