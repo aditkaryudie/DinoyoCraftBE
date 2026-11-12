@@ -5,6 +5,7 @@
 
 import { Router } from 'express';
 import authRoutes from './authRoutes.js';
+import userRoutes from './userRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import aiRoutes from './aiRoutes.js';
 import productRoutes from './productRoutes.js';
@@ -17,7 +18,7 @@ import orderRoutes from './orderRoutes.js';
 import paymentRoutes from './paymentRoutes.js';
 import reviewRoutes from './reviewRoutes.js';
 import notificationRoutes from './notificationRoutes.js';
-import userRoutes from './userRoutes.js';
+import { ingestClientLog } from '../controllers/systemLogController.js';
 
 const router = Router();
 
@@ -30,6 +31,8 @@ router.use('/ai', aiRoutes);
 router.use('/products', productRoutes);
 router.use('/mitra', mitraRoutes);
 router.use('/chat', chatRoutes);
+
+// Rute Fungsional E-Commerce
 router.use('/addresses', addressRoutes);
 router.use('/cart', cartRoutes);
 router.use('/carts', cartRoutes);
@@ -37,5 +40,9 @@ router.use('/orders', orderRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/notifications', notificationRoutes);
+
+// Endpoint Ingest Telemetry Aman (Mobile Flutter & Web Frontend) (§10.3, §10.4, §11)
+router.post('/internal/logs/mobile', ingestClientLog);
+router.post('/internal/logs/web', ingestClientLog);
 
 export default router;

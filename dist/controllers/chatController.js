@@ -3,17 +3,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getChatContacts = exports.getChatHistory = exports.getMessages = exports.sendMessage = void 0;
+exports.markConversationAsRead = exports.getUnreadChatCount = exports.getChatContacts = exports.getChatHistory = exports.getMessages = exports.sendMessage = void 0;
 const pusher_1 = __importDefault(require("pusher"));
 const database_js_1 = __importDefault(require("../config/database.js"));
 const encryption_js_1 = require("../utils/encryption.js");
 const notificationService_js_1 = require("../services/notificationService.js");
 // Inisialisasi Pusher Server SDK
 const pusher = new pusher_1.default({
-    appId: (process.env.PUSHER_APP_ID || '').trim(),
-    key: (process.env.PUSHER_KEY || '').trim(),
-    secret: (process.env.PUSHER_SECRET || '').trim(),
-    cluster: (process.env.PUSHER_CLUSTER || 'ap1').trim(),
+    appId: process.env.PUSHER_APP_ID,
+    key: process.env.PUSHER_APP_KEY,
+    secret: process.env.PUSHER_APP_SECRET,
+    cluster: 'mt1', // <-- Ganti dengan hasil intipan dari Flutter
     useTLS: true
 });
 /**
@@ -50,6 +50,11 @@ const sendMessage = async (req, res) => {
         };
         // 2. Trigger Pusher agar frontend langsung menerima pesan secara real-time
         // Nama channel dibuat unik berdasarkan percakapan antara dua user dan channel user
+        const [senderRows] = await database_js_1.default.query(`SELECT u.name, mp.store_name, COALESCE(NULLIF(TRIM(mp.store_name), ''), u.name) AS display_name
+       FROM users u
+       LEFT JOIN mitra_profiles mp ON mp.user_id = u.id
+       WHERE u.id = ? LIMIT 1`, [numericSenderId]);
+        const senderName = senderRows?.[0]?.display_name || senderRows?.[0]?.name || 'Seseorang';
         const channelName = `chat-${Math.min(numericSenderId, numericTargetId)}-${Math.max(numericSenderId, numericTargetId)}`;
         const userTargetChannel = `user-${numericTargetId}`;
         const userSenderChannel = `user-${numericSenderId}`;
@@ -59,6 +64,8 @@ const sendMessage = async (req, res) => {
                 id: Number(newMessage.id),
                 sender_id: numericSenderId,
                 receiver_id: numericTargetId,
+                sender_name: senderName,
+                store_name: senderRows?.[0]?.store_name || senderName,
                 message: message.trim(), // Tetap kirim teks asli ke Pusher (karena Pusher TLS sudah aman)
                 created_at: newMessage.created_at
             });
@@ -69,9 +76,12 @@ const sendMessage = async (req, res) => {
         }
         // Trigger FCM Push Notification ke penerima chat
         try {
-            const [senderRows] = await database_js_1.default.query('SELECT name FROM users WHERE id = ? LIMIT 1', [numericSenderId]);
-            const senderName = senderRows?.[0]?.name || 'Seseorang';
-            (0, notificationService_js_1.sendPushNotificationToUser)(numericTargetId, `Pesan Baru dari ${senderName} 💬`, message.trim(), { type: 'chat', sender_id: String(numericSenderId), store_name: senderName }).catch((err) => console.warn('[FCM] Push notification error:', err));
+            (0, notificationService_js_1.sendPushNotificationToUser)(numericTargetId, `Pesan Baru dari ${senderName}`, message.trim(), {
+                type: 'chat',
+                route: `/chat-room?store=${encodeURIComponent(senderName)}&userId=${numericSenderId}`,
+                sender_id: String(numericSenderId),
+                store_name: senderName,
+            }).catch((err) => console.warn('[FCM] Push notification error:', err));
         }
         catch (fcmErr) {
             console.warn('⚠️ Gagal trigger push notification chat:', fcmErr);
@@ -198,4 +208,75 @@ const getChatContacts = async (req, res) => {
     }
 };
 exports.getChatContacts = getChatContacts;
+/**
+ * Mengambil total jumlah pesan belum dibaca untuk user yang sedang login.
+ * GET /api/chat/unread-count
+ */
+const getUnreadChatCount = async (req, res) => {
+    try {
+        const currentUserId = req.user?.id || req.user?.userId || res.locals['userId'];
+        if (!currentUserId) {
+            res.status(401).json({ success: false, message: 'Autentikasi gagal.' });
+            return;
+        }
+        const numericCurrentId = Number(currentUserId);
+        const [rows] = await database_js_1.default.query('SELECT COUNT(*) AS unread_count FROM messages WHERE receiver_id = ? AND is_read = 0', [numericCurrentId]);
+        const [senderRows] = await database_js_1.default.query(`SELECT m.sender_id, COALESCE(NULLIF(TRIM(mp.store_name), ''), u.name) AS store_name, COUNT(*) AS unread_count
+       FROM messages m
+       JOIN users u ON u.id = m.sender_id
+       LEFT JOIN mitra_profiles mp ON mp.user_id = u.id
+       WHERE m.receiver_id = ? AND m.is_read = 0
+       GROUP BY m.sender_id, store_name`, [numericCurrentId]);
+        res.status(200).json({
+            success: true,
+            data: {
+                unread_count: Number(rows?.[0]?.unread_count || 0),
+                unread_senders: senderRows || [],
+            },
+        });
+    }
+    catch (error) {
+        console.error('❌ Error saat getUnreadChatCount:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Gagal mengambil jumlah pesan belum dibaca.',
+            error: error.message,
+        });
+    }
+};
+exports.getUnreadChatCount = getUnreadChatCount;
+/**
+ * Menandai pesan dari targetUserId kepada user login sebagai sudah dibaca.
+ * PATCH /api/chat/messages/:targetUserId/read
+ */
+const markConversationAsRead = async (req, res) => {
+    try {
+        const currentUserId = req.user?.id || req.user?.userId || res.locals['userId'];
+        const { targetUserId } = req.params;
+        if (!currentUserId) {
+            res.status(401).json({ success: false, message: 'Autentikasi gagal.' });
+            return;
+        }
+        const numericCurrentId = Number(currentUserId);
+        const numericTargetId = Number(targetUserId);
+        const [result] = await database_js_1.default.query('UPDATE messages SET is_read = 1 WHERE sender_id = ? AND receiver_id = ? AND is_read = 0', [numericTargetId, numericCurrentId]);
+        const [countRows] = await database_js_1.default.query('SELECT COUNT(*) AS unread_count FROM messages WHERE receiver_id = ? AND is_read = 0', [numericCurrentId]);
+        res.status(200).json({
+            success: true,
+            data: {
+                marked_count: Number(result?.affectedRows || 0),
+                unread_count: Number(countRows?.[0]?.unread_count || 0),
+            },
+        });
+    }
+    catch (error) {
+        console.error('❌ Error saat markConversationAsRead:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Gagal menandai pesan sudah dibaca.',
+            error: error.message,
+        });
+    }
+};
+exports.markConversationAsRead = markConversationAsRead;
 //# sourceMappingURL=chatController.js.map

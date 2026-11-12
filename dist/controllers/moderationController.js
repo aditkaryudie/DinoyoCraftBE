@@ -8,25 +8,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.submitAccountDeletion = exports.submitReport = exports.handleDeletionAction = exports.getDeletionRequests = exports.handleReportAction = exports.getReports = void 0;
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const database_js_1 = __importDefault(require("../config/database.js"));
-const extractOptionalUserId = (req, res) => {
-    const existing = req.user?.id || req.user?.userId || res.locals['userId'];
-    if (existing)
-        return Number(existing);
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        try {
-            const token = authHeader.split(' ')[1] || '';
-            const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET || 'rahasia_negara');
-            return Number(decoded?.id || decoded?.userId || 0) || null;
-        }
-        catch {
-            return null;
-        }
-    }
-    return null;
-};
 let tablesInitialized = false;
 /**
  * Memastikan tabel reports dan account_deletions tersedia di database
@@ -344,11 +326,9 @@ exports.handleDeletionAction = handleDeletionAction;
 const submitReport = async (req, res) => {
     try {
         await ensureModerationTables();
-        const userId = extractOptionalUserId(req, res);
-        const { type, target_type, target_id, target_name, reason, details } = req.body;
-        const resolvedType = type || target_type || 'produk';
-        const resolvedReason = details ? `${reason || ''} - ${details}`.trim() : reason;
-        if (!resolvedType || !resolvedReason) {
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        const { type, target_id, target_name, reason } = req.body;
+        if (!type || !reason) {
             res.status(400).json({ success: false, message: 'Tipe dan alasan laporan wajib diisi' });
             return;
         }
@@ -359,7 +339,7 @@ const submitReport = async (req, res) => {
                 reporterName = uRows[0].name;
         }
         const [result] = await database_js_1.default.query(`INSERT INTO reports (reporter_id, reporter_name, type, target_id, target_name, reason, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`, [userId || null, reporterName, resolvedType, target_id || null, target_name || '-', resolvedReason]);
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`, [userId || null, reporterName, type, target_id || null, target_name || '-', reason]);
         res.status(201).json({
             success: true,
             message: 'Laporan Anda telah diterima dan akan ditinjau oleh tim kami.',
@@ -375,9 +355,8 @@ exports.submitReport = submitReport;
 const submitAccountDeletion = async (req, res) => {
     try {
         await ensureModerationTables();
-        const userId = extractOptionalUserId(req, res);
-        const { reason, details, email, name } = req.body;
-        const resolvedReason = details ? `${reason || ''} - ${details}`.trim() : reason;
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        const { reason, email, name } = req.body;
         let userEmail = email;
         let userName = name;
         if (userId) {
@@ -387,12 +366,12 @@ const submitAccountDeletion = async (req, res) => {
                 userName = uRows[0].name;
             }
         }
-        if (!userEmail || !resolvedReason) {
+        if (!userEmail || !reason) {
             res.status(400).json({ success: false, message: 'Email dan alasan penghapusan akun wajib diisi' });
             return;
         }
         const [result] = await database_js_1.default.query(`INSERT INTO account_deletions (user_id, name, email, reason, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`, [userId || null, userName || 'Pengguna', userEmail, resolvedReason]);
+       VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`, [userId || null, userName || 'Pengguna', userEmail, reason]);
         res.status(201).json({
             success: true,
             message: 'Permohonan penghapusan akun telah dicatat.',

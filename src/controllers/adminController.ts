@@ -1,11 +1,11 @@
 // ============================================================
 //  src/controllers/adminController.ts
-//  Controller Admin — manajemen user, toko, transaksi, kategori, jadwal, dan master data
+//  Controller Admin — manajemen user dan master data
 // ============================================================
 
 import { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
 import pool from '../config/database.js';
+import { pusher } from '../utils/pusher.js';
 import {
   sendSuccess,
   sendError,
@@ -13,13 +13,18 @@ import {
   sendBadRequest,
 } from '../utils/response.js';
 import {
+  UserEntity,
   SafeUser,
   CreateMasterDataDto,
   CountResult,
 } from '../types/index.js';
 import { getAuthLocals } from '../middlewares/authMiddleware.js';
+import {
+  adminListWithdrawals,
+  adminHandleWithdrawal,
+} from '../services/walletService.js';
 
-const sanitizeUser = (user: any): SafeUser => {
+const sanitizeUser = (user: UserEntity): SafeUser => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { password_hash, token_version, ...safe } = user;
   return safe as SafeUser;
@@ -31,16 +36,19 @@ const sanitizeUser = (user: any): SafeUser => {
  */
 export const getDashboardStats = async (_req: Request, res: Response): Promise<void> => {
   try {
+    // 1. Toko Pengrajin Aktif (Terverifikasi & Aktif)
     const [tokoAktifRows] = await pool.execute<any[]>(
       'SELECT COUNT(*) AS total FROM mitra_profiles WHERE is_verified = 1 AND is_active = 1'
     );
     const tokoPengrajinAktif = Number(tokoAktifRows[0]?.total ?? 0);
 
+    // 2. Pengajuan Toko Baru (Menunggu Verifikasi)
     const [tokoPendingRows] = await pool.execute<any[]>(
       'SELECT COUNT(*) AS total FROM mitra_profiles WHERE is_verified = 0'
     );
     const pengajuanTokoBaru = Number(tokoPendingRows[0]?.total ?? 0);
 
+    // 3. Total Transaksi & Omzet dari tabel orders (dan fallback transactions jika ada)
     const [orderStatsRows] = await pool.execute<any[]>(
       `SELECT 
         COUNT(*) AS totalTransaksi,
@@ -51,6 +59,7 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
     let totalTransaksi = Number(orderStatsRows[0]?.totalTransaksi ?? 0);
     let totalOmzet = Number(orderStatsRows[0]?.totalOmzet ?? 0);
 
+    // Jika orders kosong, periksa tabel transactions
     if (totalTransaksi === 0) {
       const [trxStatsRows] = await pool.execute<any[]>(
         `SELECT 
@@ -63,17 +72,19 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
       totalOmzet = Number(trxStatsRows[0]?.totalOmzet ?? 0);
     }
 
+    // 4. Kunjungan Wisatawan (Total pengunjung unik dari log / pembeli)
     const [visitorRows] = await pool.execute<any[]>(
       `SELECT COUNT(DISTINCT ip_address) AS total FROM audit_logs WHERE ip_address IS NOT NULL`
     );
     let kunjunganWisatawan = Number(visitorRows[0]?.total ?? 0);
     if (kunjunganWisatawan === 0) {
       const [userCountRows] = await pool.execute<any[]>(
-        `SELECT COUNT(*) AS total FROM users WHERE role IN ('pengunjung', 'buyer')`
+        `SELECT COUNT(*) AS total FROM users WHERE role = 'buyer'`
       );
       kunjunganWisatawan = Number(userCountRows[0]?.total ?? 0);
     }
 
+    // 5. Transaksi Terbaru
     const [latestOrders] = await pool.execute<any[]>(
       `SELECT 
         COALESCE(o.tracking_number, CONCAT('INV/', DATE_FORMAT(o.created_at, '%Y/%m/'), LPAD(o.id, 4, '0'))) AS id,
@@ -108,106 +119,37 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
       }));
     }
 
-    res.status(200).json({
-      success: true,
-      data: {
-        totalTransaksi,
-        totalOmzet,
-        kunjunganWisatawan,
-        tokoPengrajinAktif,
-        pengajuanTokoBaru,
-        transaksiTerbaru
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching dashboard stats:', error);
-    res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server' });
-  }
-};
-
-/**
- * GET /api/admin/transactions
- * Daftar seluruh transaksi lintas toko (dari tabel orders & transactions)
- */
-export const getAdminTransactions = async (_req: Request, res: Response): Promise<void> => {
-  try {
-    const [orderRows]: any = await pool.query(
-      `SELECT 
-        o.id,
-        o.created_at,
-        o.total_amount,
-        o.total_due,
-        o.status,
-        o.tracking_number,
-        COALESCE(m.store_name, 'Toko Mitra') AS store_name,
-        COALESCE(u.name, 'Pelanggan') AS buyer_name,
-        t.reference_code,
-        t.status AS payment_status
-       FROM orders o
-       LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
-       LEFT JOIN users u ON o.user_id = u.id
-       LEFT JOIN transactions t ON t.order_id = o.id
-       ORDER BY o.created_at DESC`
-    );
-
-    const mapped = (orderRows || []).map((row: any) => {
-      const d = row.created_at ? new Date(row.created_at) : new Date();
-      const tanggal = d.toLocaleDateString('id-ID', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
-      const rawStatus = String(row.status || '').toLowerCase();
-      let statusLabel: 'Berhasil' | 'Menunggu' | 'Dibatalkan' = 'Menunggu';
-      if (['paid', 'packed', 'shipped', 'completed', 'selesai', 'delivered'].includes(rawStatus)) {
-        statusLabel = 'Berhasil';
-      } else if (rawStatus === 'cancelled') {
-        statusLabel = 'Dibatalkan';
-      }
-
-      const invoiceId =
-        row.reference_code ||
-        `INV/${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(row.id).padStart(4, '0')}`;
-
-      return {
-        rawId: row.id,
-        order_id: row.id,
-        id: invoiceId,
-        tanggal,
-        toko: row.store_name,
-        pembeli: row.buyer_name,
-        nominal: Number(row.total_amount || row.total_due || 0),
-        status: statusLabel,
-        orderStatus: row.status
-      };
-    });
+    const dashboardData = {
+      totalTransaksi,
+      totalOmzet,
+      kunjunganWisatawan,
+      tokoPengrajinAktif,
+      pengajuanTokoBaru,
+      transaksiTerbaru
+    };
 
     res.status(200).json({
       success: true,
-      data: mapped
+      data: dashboardData
     });
   } catch (error) {
-    console.error('Error getAdminTransactions:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengambil data transaksi' });
+    console.error("Error fetching dashboard stats:", error);
+    res.status(500).json({ success: false, message: "Terjadi kesalahan pada server" });
   }
 };
 
 /**
  * GET /api/admin/users
  */
-export const getAllUsers = async (req: Request, res: Response): Promise<void> => {
+export const getAllUsers = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const page = Math.max(1, parseInt(req.query['page'] as string) || 1);
-    const limit = Math.min(200, parseInt(req.query['limit'] as string) || 100);
+    const page = Math.max(1, parseInt(_req.query['page'] as string) || 1);
+    const limit = Math.min(100, parseInt(_req.query['limit'] as string) || 20);
     const offset = (page - 1) * limit;
 
-    const [rows]: any = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.is_active, u.created_at, u.updated_at,
-              m.store_name
-       FROM users u
-       LEFT JOIN mitra_profiles m ON u.id = m.user_id
-       ORDER BY u.created_at DESC
-       LIMIT ? OFFSET ?`,
+    const [rows] = await pool.execute<UserEntity[]>(
+      `SELECT id, name, email, role, is_active, created_at, updated_at
+       FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       [limit, offset]
     );
 
@@ -218,130 +160,11 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
     const total = countRows[0]?.total ?? 0;
 
     sendSuccess(res, rows.map(sanitizeUser), 'Daftar pengguna berhasil diambil.', 200, {
-      page,
-      limit,
-      total,
+      page, limit, total,
       totalPages: Math.ceil(total / limit),
     });
   } catch (err) {
     sendError(res, 'Gagal mengambil data pengguna.', 500, String(err));
-  }
-};
-
-/**
- * POST /api/admin/users
- */
-export const createUser = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { name, email, password, role = 'pengunjung', store_name } = req.body;
-    if (!name || !email) {
-      sendBadRequest(res, 'Nama dan email wajib diisi.');
-      return;
-    }
-
-    const normalizedEmail = String(email).trim().toLowerCase();
-    const [existing]: any = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [normalizedEmail]);
-    if (existing && existing.length > 0) {
-      res.status(409).json({ success: false, message: 'Email sudah terdaftar.' });
-      return;
-    }
-
-    const normalizedRole =
-      String(role).toLowerCase() === 'admin'
-        ? 'admin'
-        : String(role).toLowerCase() === 'mitra'
-        ? 'mitra'
-        : 'pengunjung';
-
-    const passwordHash = await bcrypt.hash(password || 'DinoyoCraft123', 10);
-    const [result]: any = await pool.query(
-      'INSERT INTO users (name, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, NOW(), NOW())',
-      [name.trim(), normalizedEmail, passwordHash, normalizedRole]
-    );
-
-    const newUserId = result.insertId;
-    if (normalizedRole === 'mitra') {
-      await pool.query(
-        `INSERT INTO mitra_profiles (user_id, store_name, whatsapp_number, workshop_address, ktp_file_url, nib_file_url, sample_product_images, is_verified, is_active)
-         VALUES (?, ?, '-', '-', '', '', '[]', 1, 1)`,
-        [newUserId, store_name || `Toko ${name.trim()}`]
-      );
-    }
-
-    sendSuccess(
-      res,
-      {
-        id: newUserId,
-        name: name.trim(),
-        email: normalizedEmail,
-        role: normalizedRole,
-        is_active: 1,
-        store_name: normalizedRole === 'mitra' ? store_name || `Toko ${name.trim()}` : null
-      },
-      'Pengguna baru berhasil ditambahkan.',
-      201
-    );
-  } catch (err) {
-    sendError(res, 'Gagal menambahkan pengguna.', 500, String(err));
-  }
-};
-
-/**
- * PUT /api/admin/users/:id
- */
-export const updateUser = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = parseInt((req.params as { id: string }).id ?? '0');
-    const { name, email, role, is_active, store_name } = req.body;
-
-    const normalizedRole = role
-      ? String(role).toLowerCase() === 'admin'
-        ? 'admin'
-        : String(role).toLowerCase() === 'mitra'
-        ? 'mitra'
-        : 'pengunjung'
-      : null;
-
-    await pool.query(
-      `UPDATE users
-       SET name = COALESCE(?, name),
-           email = COALESCE(?, email),
-           role = COALESCE(?, role),
-           is_active = COALESCE(?, is_active),
-           updated_at = NOW()
-       WHERE id = ?`,
-      [
-        name ?? null,
-        email ? String(email).trim().toLowerCase() : null,
-        normalizedRole,
-        typeof is_active === 'boolean' ? (is_active ? 1 : 0) : is_active ?? null,
-        userId
-      ]
-    );
-
-    if (store_name) {
-      await pool.query(
-        'UPDATE mitra_profiles SET store_name = ? WHERE user_id = ?',
-        [store_name, userId]
-      );
-    }
-
-    sendSuccess(res, { id: userId, name, email, role: normalizedRole }, 'Data pengguna berhasil diperbarui.');
-  } catch (err) {
-    sendError(res, 'Gagal memperbarui data pengguna.', 500, String(err));
-  }
-};
-
-/**
- * DELETE /api/admin/users/:id
- */
-export const deleteUser = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = parseInt((req.params as { id: string }).id ?? '0');
-    await pool.query('UPDATE users SET is_active = 0, updated_at = NOW() WHERE id = ?', [userId]);
-    sendSuccess(res, { id: userId }, 'Pengguna berhasil dihapus/dinonaktifkan.');
-  } catch (err) {
-    sendError(res, 'Gagal menghapus pengguna.', 500, String(err));
   }
 };
 
@@ -371,6 +194,31 @@ export const updateUserStatus = async (req: Request, res: Response): Promise<voi
     sendSuccess(res, { userId, is_active }, 'Status pengguna berhasil diperbarui.');
   } catch (err) {
     sendError(res, 'Gagal memperbarui status pengguna.', 500, String(err));
+  }
+};
+
+/**
+ * PATCH /api/admin/users/:id/force-logout
+ * Menaikkan token_version → seluruh access & refresh token pengguna di
+ * SEMUA perangkat langsung tidak berlaku (sesi diakhiri paksa).
+ */
+export const forceLogoutUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = parseInt((req.params as { id: string }).id ?? '0');
+
+    const [result] = await pool.execute(
+      'UPDATE users SET token_version = token_version + 1, updated_at = NOW() WHERE id = ?',
+      [userId]
+    );
+
+    if ((result as { affectedRows: number }).affectedRows === 0) {
+      sendNotFound(res, 'Pengguna tidak ditemukan.');
+      return;
+    }
+
+    sendSuccess(res, { userId }, 'Sesi pengguna telah diakhiri dari semua perangkat.');
+  } catch (err) {
+    sendError(res, 'Gagal mengakhiri sesi pengguna.', 500, String(err));
   }
 };
 
@@ -419,7 +267,7 @@ export const createMasterData = async (req: Request, res: Response): Promise<voi
 
 /**
  * GET /api/admin/verifikasi
- * Mendapatkan daftar semua pengajuan verifikasi & manajemen toko mitra
+ * Mendapatkan daftar semua pengajuan verifikasi toko mitra
  */
 export const getVerifikasiList = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -441,8 +289,7 @@ export const getVerifikasiList = async (_req: Request, res: Response): Promise<v
         m.is_active, 
         m.created_at, 
         u.name AS owner_name, 
-        u.email,
-        (SELECT COUNT(*) FROM products p WHERE p.mitra_id = m.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products
+        u.email
        FROM mitra_profiles m
        JOIN users u ON m.user_id = u.id
        ORDER BY m.created_at DESC`
@@ -468,6 +315,7 @@ export const verifyMitraStore = async (req: Request, res: Response): Promise<voi
       return;
     }
 
+    // Cek keberadaan profil mitra
     const [rows] = await pool.execute<any[]>(
       'SELECT user_id FROM mitra_profiles WHERE id = ?',
       [mitraId]
@@ -483,328 +331,211 @@ export const verifyMitraStore = async (req: Request, res: Response): Promise<voi
     const isVerifiedVal = isApproved ? 1 : 2;
     const rejectionReason = isApproved ? null : (reason?.trim() || 'Dokumen belum lengkap atau tidak sesuai ketentuan.');
 
+    // Update status di tabel mitra_profiles
     await pool.execute(
       'UPDATE mitra_profiles SET is_verified = ?, is_active = 1, rejection_reason = ?, updated_at = NOW() WHERE id = ?',
       [isVerifiedVal, rejectionReason, mitraId]
     );
 
+    // Update status akun user di tabel users (tetap aktif agar bisa login & melengkapi dokumen)
     await pool.execute(
       'UPDATE users SET is_active = 1, updated_at = NOW() WHERE id = ?',
       [userId]
     );
 
-    sendSuccess(
-      res,
-      { id: mitraId, user_id: userId, status, is_verified: isVerifiedVal, rejection_reason: rejectionReason },
-      isApproved ? 'Toko mitra berhasil disetujui dan diaktifkan.' : 'Pengajuan toko mitra berhasil ditolak.'
-    );
+    // Kirim notifikasi realtime via Pusher Channels ke mitra terkait
+    try {
+      await pusher.trigger(
+        [`user-${userId}`, `mitra-${mitraId}`, 'mitra-verification'],
+        'verification-status-updated',
+        {
+          mitraId,
+          userId,
+          status,
+          is_verified: isVerifiedVal,
+          rejection_reason: rejectionReason,
+          timestamp: new Date().toISOString(),
+        }
+      );
+      console.log(`[Pusher Backend] Event 'verification-status-updated' berhasil dikirim ke user-${userId}`);
+    } catch (pusherErr) {
+      console.warn('⚠️ Pusher trigger error pada verifikasi mitra:', pusherErr);
+    }
+
+    const message = isApproved
+      ? 'Toko mitra berhasil disetujui.'
+      : 'Pengajuan toko mitra telah ditolak.';
+
+    sendSuccess(res, { mitraId, status, rejectionReason }, message);
   } catch (err) {
     sendError(res, 'Gagal memproses verifikasi toko mitra.', 500, String(err));
   }
 };
 
+
+// ============================================================
+// WITHDRAWAL — persetujuan tarik saldo mitra
+// ============================================================
+
 /**
- * PATCH /api/admin/stores/:id/status
- * Aktifkan / suspend toko mitra
+ * GET /api/admin/withdrawals?status=pending
  */
-export const updateStoreStatus = async (req: Request, res: Response): Promise<void> => {
+export const getWithdrawals = async (req: Request, res: Response): Promise<void> => {
   try {
-    const mitraId = parseInt((req.params as { id: string }).id ?? '0');
-    const { is_active } = req.body;
-    const activeVal = is_active ? 1 : 0;
-
-    await pool.query(
-      'UPDATE mitra_profiles SET is_active = ?, updated_at = NOW() WHERE id = ?',
-      [activeVal, mitraId]
-    );
-
-    sendSuccess(res, { id: mitraId, is_active: activeVal }, 'Status operasional toko berhasil diperbarui.');
+    const status = (req.query['status'] as string) || undefined;
+    const rows = await adminListWithdrawals(status, Number(req.query['limit'] || 50));
+    sendSuccess(res, rows, 'Daftar pengajuan penarikan berhasil diambil.');
   } catch (err) {
-    sendError(res, 'Gagal memperbarui status toko.', 500, String(err));
+    sendError(res, 'Gagal mengambil daftar penarikan.', 500, String(err));
   }
 };
 
 /**
- * DELETE /api/admin/stores/:id
+ * PATCH /api/admin/withdrawals/:id
+ * Body: { action: 'approve' | 'reject', admin_note? }
  */
-export const deleteStore = async (req: Request, res: Response): Promise<void> => {
+export const handleWithdrawalAction = async (req: Request, res: Response): Promise<void> => {
   try {
-    const mitraId = parseInt((req.params as { id: string }).id ?? '0');
-    await pool.query('UPDATE mitra_profiles SET is_active = 0, updated_at = NOW() WHERE id = ?', [mitraId]);
-    sendSuccess(res, { id: mitraId }, 'Toko mitra berhasil dinonaktifkan.');
-  } catch (err) {
-    sendError(res, 'Gagal menghapus toko mitra.', 500, String(err));
-  }
-};
+    const admin = getAuthLocals(res);
+    const requestId = Number((req.params as { id: string }).id);
+    const { action, admin_note } = req.body as { action: string; admin_note?: string };
 
-/**
- * GET /api/admin/categories
- */
-export const getCategories = async (_req: Request, res: Response): Promise<void> => {
-  try {
-    const [rows]: any = await pool.query(
-      `SELECT c.id, c.name, c.description, c.icon_url, c.created_at,
-              (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products
-       FROM categories c
-       ORDER BY c.id ASC`
-    );
-    sendSuccess(res, rows, 'Daftar kategori berhasil diambil.');
-  } catch (err) {
-    sendError(res, 'Gagal mengambil daftar kategori.', 500, String(err));
-  }
-};
-
-/**
- * POST /api/admin/categories
- */
-export const createCategory = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { name, description, icon_url } = req.body;
-    if (!name || !String(name).trim()) {
-      sendBadRequest(res, 'Nama kategori wajib diisi.');
+    if (action !== 'approve' && action !== 'reject') {
+      sendBadRequest(res, "Field action harus 'approve' atau 'reject'.");
       return;
     }
 
-    const [result]: any = await pool.query(
-      'INSERT INTO categories (name, description, icon_url, created_at) VALUES (?, ?, ?, NOW())',
-      [String(name).trim(), description || null, icon_url || null]
-    );
-
-    sendSuccess(
-      res,
-      {
-        id: result.insertId,
-        name: String(name).trim(),
-        description: description || '',
-        total_products: 0
-      },
-      'Kategori berhasil ditambahkan.',
-      201
-    );
-  } catch (err) {
-    sendError(res, 'Gagal menambahkan kategori.', 500, String(err));
+    const result = await adminHandleWithdrawal(admin.userId, requestId, action, admin_note);
+    sendSuccess(res, result, action === 'approve'
+      ? 'Penarikan disetujui. Segera transfer dana ke rekening mitra.'
+      : 'Penarikan ditolak dan saldo dikembalikan.');
+  } catch (err: any) {
+    sendError(res, err.message || 'Gagal memproses pengajuan.', err.status || 500);
   }
 };
 
-/**
- * PUT /api/admin/categories/:id
- */
-export const updateCategory = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const catId = parseInt((req.params as { id: string }).id ?? '0');
-    const { name, description, icon_url } = req.body;
-
-    await pool.query(
-      `UPDATE categories
-       SET name = COALESCE(?, name),
-           description = COALESCE(?, description),
-           icon_url = COALESCE(?, icon_url)
-       WHERE id = ?`,
-      [name ?? null, description ?? null, icon_url ?? null, catId]
-    );
-
-    sendSuccess(res, { id: catId, name, description }, 'Kategori berhasil diperbarui.');
-  } catch (err) {
-    sendError(res, 'Gagal memperbarui kategori.', 500, String(err));
-  }
-};
+// ============================================================
+// TRANSAKSI LINTAS TOKO — daftar transaksi nyata (Midtrans + DB)
+// ============================================================
 
 /**
- * DELETE /api/admin/categories/:id
+ * GET /api/admin/transactions?status=&q=&page=1&limit=50
  */
-export const deleteCategory = async (req: Request, res: Response): Promise<void> => {
+export const getAdminTransactions = async (req: Request, res: Response): Promise<void> => {
   try {
-    const catId = parseInt((req.params as { id: string }).id ?? '0');
-    await pool.query('DELETE FROM categories WHERE id = ?', [catId]);
-    sendSuccess(res, { id: catId }, 'Kategori berhasil dihapus.');
-  } catch (err) {
-    sendError(res, 'Gagal menghapus kategori.', 500, String(err));
-  }
-};
+    const statusFilter = String(req.query['status'] || '').trim().toLowerCase();
+    const search = String(req.query['q'] || '').trim();
+    const page = Math.max(1, Number(req.query['page'] || 1));
+    const limit = Math.min(200, Math.max(1, Number(req.query['limit'] || 50)));
+    const offset = (page - 1) * limit;
 
-/**
- * GET /api/admin/schedules
- * Menggunakan tabel educational_tours
- */
-export const getSchedules = async (_req: Request, res: Response): Promise<void> => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS \`visit_schedules\` (
-        \`id\` int NOT NULL AUTO_INCREMENT,
-        \`agency_name\` varchar(255) NOT NULL,
-        \`visit_date\` date NOT NULL,
-        \`visit_time\` time DEFAULT '09:00:00',
-        \`participant_count\` int DEFAULT 1,
-        \`pic_name\` varchar(150) DEFAULT '-',
-        \`pic_phone\` varchar(50) DEFAULT '-',
-        \`status\` varchar(50) DEFAULT 'pending',
-        \`notes\` text DEFAULT NULL,
-        \`created_at\` datetime DEFAULT CURRENT_TIMESTAMP,
-        \`updated_at\` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (\`id\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-    let [rows]: any = await pool.query('SELECT * FROM visit_schedules ORDER BY visit_date ASC, id DESC');
+    const whereParts: string[] = ['o.id IS NOT NULL'];
+    const params: any[] = [];
 
-    if (!rows || rows.length === 0) {
-      // Seed 3 jadwal kunjungan awal secara idempotent jika tabel masih kosong
-      await pool.query(
-        `INSERT INTO visit_schedules (agency_name, visit_date, visit_time, participant_count, pic_name, pic_phone, status, notes, created_at, updated_at)
-         VALUES
-         ('SMAN 1 Malang', '2026-04-20', '09:00:00', 45, 'Budi Santoso', '081234567890', 'approved', 'Mitra: Keramik Jaya Abadi', NOW(), NOW()),
-         ('Universitas Brawijaya (FIB)', '2026-04-25', '13:00:00', 30, 'Dr. Siti Aminah', '081298765432', 'pending', 'Mitra: Galeri Tanah Liat', NOW(), NOW()),
-         ('SDN Dinoyo 2', '2026-03-10', '08:00:00', 60, 'Ibu Ratna', '085611223344', 'completed', 'Mitra: Dinoyo Craft Studio', NOW(), NOW())`
-      );
-      [rows] = await pool.query('SELECT * FROM visit_schedules ORDER BY visit_date ASC, id DESC');
+    if (statusFilter && statusFilter !== 'semua' && statusFilter !== 'all') {
+      if (statusFilter === 'failed') {
+        whereParts.push("t.status IN ('failed', 'cancelled')");
+      } else if (statusFilter === 'success' || statusFilter === 'paid') {
+        whereParts.push("t.status = 'success'");
+      } else if (statusFilter === 'pending') {
+        whereParts.push("t.status = 'pending'");
+      } else if (statusFilter === 'cancelled' || statusFilter === 'expired') {
+        whereParts.push("t.status IN ('failed', 'cancelled')");
+      }
     }
 
-    const mapped = (rows || []).map((r: any) => {
-      const dateStr = r.visit_date
-        ? new Date(r.visit_date).toISOString().split('T')[0]
-        : '2026-04-20';
-      const timeStr = r.visit_time ? String(r.visit_time).slice(0, 5) + ' WIB' : '09:00 WIB';
-      const rawStatus = String(r.status || 'pending').toLowerCase();
-      let uiStatus: 'Terjadwal' | 'Menunggu Konfirmasi' | 'Selesai' | 'Dibatalkan' = 'Menunggu Konfirmasi';
-      if (rawStatus === 'approved' || rawStatus === 'terjadwal') uiStatus = 'Terjadwal';
-      else if (rawStatus === 'completed' || rawStatus === 'selesai') uiStatus = 'Selesai';
-      else if (rawStatus === 'rejected' || rawStatus === 'cancelled' || rawStatus === 'dibatalkan') uiStatus = 'Dibatalkan';
+    if (search) {
+      whereParts.push(
+        '(t.reference_code LIKE ? OR t.gateway_order_id LIKE ? OR m.store_name LIKE ? OR u.name LIKE ?)'
+      );
+      const pattern = `%${search}%`;
+      params.push(pattern, pattern, pattern, pattern);
+    }
 
-      const notesStr = String(r.notes || '');
-      const mitraMatch = notesStr.startsWith('Mitra:')
-        ? notesStr.replace('Mitra:', '').trim()
-        : notesStr || 'Keramik Jaya Abadi';
+    const whereClause = `WHERE ${whereParts.join(' AND ')}`;
 
+    const [countRows]: any = await pool.query(
+      `SELECT COUNT(*) AS total
+       FROM transactions t
+       LEFT JOIN orders o ON o.transaction_id = t.id
+       LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN users u ON o.user_id = u.id
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countRows?.[0]?.total ?? 0);
+
+    const [rows]: any = await pool.query(
+      `SELECT
+         t.id,
+         t.reference_code,
+         t.gateway,
+         t.gateway_order_id,
+         t.transaction_type AS payment_method,
+         t.payment_type,
+         t.bank,
+         t.amount AS base_amount,
+         t.gateway_fee,
+         t.status AS payment_status,
+         t.paid_at,
+         t.expiry_time,
+         t.created_at,
+         o.id AS order_id,
+         o.status AS order_status,
+         m.store_name,
+         u.name AS customer_name,
+         u.email AS customer_email
+       FROM transactions t
+       LEFT JOIN orders o ON o.transaction_id = t.id
+       LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN users u ON o.user_id = u.id
+       ${whereClause}
+       ORDER BY t.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    const transactions = (rows || []).map((r: any) => {
+      const baseAmount = Number(r.base_amount || 0);
+      const gatewayFee = Number(r.gateway_fee || 0);
       return {
-        rawId: r.id,
-        id: `SCH-${String(r.id).padStart(3, '0')}`,
-        instansi: r.agency_name,
-        pic: r.pic_name,
-        telepon: r.pic_phone,
-        tanggal: dateStr,
-        waktu: timeStr,
-        peserta: Number(r.participant_count || 0),
-        mitraTujuan: mitraMatch,
-        status: uiStatus
+        id: r.reference_code || `TRX-${r.id}`,
+        transaction_id: r.id,
+        order_id: r.order_id,
+        reference_code: r.reference_code,
+        gateway: r.gateway || 'midtrans',
+        gateway_order_id: r.gateway_order_id || null,
+        store: r.store_name || '-',
+        customer: r.customer_name || 'Customer',
+        customer_email: r.customer_email || null,
+        payment_method: r.payment_method || '-',
+        payment_type: r.payment_type || null,
+        bank: r.bank || null,
+        base_amount: baseAmount,
+        gateway_fee: gatewayFee,
+        amount: baseAmount + gatewayFee,
+        status: r.payment_status === 'cancelled' ? 'failed' : r.payment_status,
+        raw_status: r.payment_status,
+        order_status: r.order_status,
+        paid_at: r.paid_at,
+        expiry_time: r.expiry_time,
+        date: r.paid_at || r.created_at,
       };
     });
 
-    sendSuccess(res, mapped, 'Daftar jadwal kunjungan edukasi berhasil diambil.');
-  } catch (err) {
-    sendError(res, 'Gagal mengambil jadwal kunjungan.', 500, String(err));
-  }
-};
-
-/**
- * POST /api/admin/schedules
- */
-export const createSchedule = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { instansi, pic, telepon, tanggal, waktu, peserta, mitraTujuan, status } = req.body;
-    if (!instansi || !tanggal) {
-      sendBadRequest(res, 'Nama instansi dan tanggal wajib diisi.');
-      return;
-    }
-
-    const cleanTime = waktu ? String(waktu).replace(' WIB', '').trim() + ':00' : '09:00:00';
-    let dbStatus = 'pending';
-    if (status === 'Terjadwal' || status === 'approved') dbStatus = 'approved';
-    else if (status === 'Selesai' || status === 'completed') dbStatus = 'completed';
-    else if (status === 'Dibatalkan' || status === 'rejected') dbStatus = 'rejected';
-
-    const [result]: any = await pool.query(
-      `INSERT INTO visit_schedules (agency_name, visit_date, visit_time, participant_count, pic_name, pic_phone, status, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [
-        instansi,
-        tanggal,
-        cleanTime.slice(0, 8),
-        Number(peserta || 1),
-        pic || '-',
-        telepon || '-',
-        dbStatus,
-        `Mitra: ${mitraTujuan || 'Keramik Jaya Abadi'}`
-      ]
-    );
-
     sendSuccess(
       res,
+      transactions,
+      'Daftar transaksi berhasil diambil.',
+      200,
       {
-        rawId: result.insertId,
-        id: `SCH-${String(result.insertId).padStart(3, '0')}`,
-        instansi,
-        pic,
-        telepon,
-        tanggal,
-        waktu: waktu || '09:00 WIB',
-        peserta: Number(peserta || 1),
-        mitraTujuan: mitraTujuan || 'Keramik Jaya Abadi',
-        status: status || 'Terjadwal'
-      },
-      'Jadwal kunjungan berhasil ditambahkan.',
-      201
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      }
     );
   } catch (err) {
-    sendError(res, 'Gagal membuat jadwal kunjungan.', 500, String(err));
-  }
-};
-
-/**
- * PUT /api/admin/schedules/:id
- */
-export const updateSchedule = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const rawId = String((req.params as { id: string }).id || '');
-    const numericId = parseInt(rawId.replace(/\D/g, ''), 10);
-    const { instansi, pic, telepon, tanggal, waktu, peserta, mitraTujuan, status } = req.body;
-
-    const cleanTime = waktu ? String(waktu).replace(' WIB', '').trim() + ':00' : null;
-    let dbStatus: string | null = null;
-    if (status === 'Terjadwal' || status === 'approved') dbStatus = 'approved';
-    else if (status === 'Menunggu Konfirmasi' || status === 'pending') dbStatus = 'pending';
-    else if (status === 'Selesai' || status === 'completed') dbStatus = 'completed';
-    else if (status === 'Dibatalkan' || status === 'rejected') dbStatus = 'rejected';
-
-    await pool.query(
-      `UPDATE visit_schedules
-       SET agency_name = COALESCE(?, agency_name),
-           pic_name = COALESCE(?, pic_name),
-           pic_phone = COALESCE(?, pic_phone),
-           visit_date = COALESCE(?, visit_date),
-           visit_time = COALESCE(?, visit_time),
-           participant_count = COALESCE(?, participant_count),
-           notes = COALESCE(?, notes),
-           status = COALESCE(?, status),
-           updated_at = NOW()
-       WHERE id = ?`,
-      [
-        instansi ?? null,
-        pic ?? null,
-        telepon ?? null,
-        tanggal ?? null,
-        cleanTime ? cleanTime.slice(0, 8) : null,
-        peserta !== undefined ? Number(peserta) : null,
-        mitraTujuan ? `Mitra: ${mitraTujuan}` : null,
-        dbStatus,
-        numericId
-      ]
-    );
-
-    sendSuccess(res, { id: rawId, rawId: numericId, status }, 'Jadwal kunjungan berhasil diperbarui.');
-  } catch (err) {
-    sendError(res, 'Gagal memperbarui jadwal kunjungan.', 500, String(err));
-  }
-};
-
-/**
- * DELETE /api/admin/schedules/:id
- */
-export const deleteSchedule = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const rawId = String((req.params as { id: string }).id || '');
-    const numericId = parseInt(rawId.replace(/\D/g, ''), 10);
-    await pool.query('DELETE FROM visit_schedules WHERE id = ?', [numericId]);
-    sendSuccess(res, { id: rawId }, 'Jadwal kunjungan berhasil dihapus.');
-  } catch (err) {
-    sendError(res, 'Gagal menghapus jadwal kunjungan.', 500, String(err));
+    sendError(res, 'Gagal mengambil daftar transaksi.', 500, String(err));
   }
 };

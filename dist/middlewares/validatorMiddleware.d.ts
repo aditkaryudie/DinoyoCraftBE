@@ -1,4 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodSchema } from 'zod';
+/**
+ * validateZod
+ * Middleware validasi berbasis Zod Schema
+ */
+export declare const validateZod: (schema: ZodSchema) => (req: Request, res: Response, next: NextFunction) => void;
 type ValidationRule = {
     field: string;
     required?: boolean;

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 // ============================================================
 //  src/app.ts
 //  Konfigurasi Express Application & Global Middleware
@@ -5,42 +6,65 @@
 
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import router from './routes/index.js';
 import { notFound, globalErrorHandler } from './middlewares/errorMiddleware.js';
-import { auditLogger } from './middlewares/auditMiddleware.js';
+import { auditLogger, requestIdMiddleware } from './middlewares/auditMiddleware.js';
 import path from 'path';
 
 // Load environment variables SEBELUM apapun
 dotenv.config();
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app: Application = express();
 
 // -------------------------------------------------------
 // 1. CORS — Konfigurasi origin ramah Mobile & Web
+// Tambahkan ini agar aplikasi web (Chrome) diizinkan mengakses API
 // -------------------------------------------------------
 app.use(
   cors({
-    origin: (_origin, callback) => {
-      // Izinkan request tanpa origin (seperti aplikasi native Flutter, Postman, emulator)
-      // serta origin browser web frontend
-      callback(null, true);
-    },
+    origin: true,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+    exposedHeaders: ['X-Request-ID'],
   })
 );
 
+// 1b. Request ID / Correlation ID Middleware (§10.1)
+app.use(requestIdMiddleware);
+
+// 2. Keamanan — Helmet & Rate Limiter
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+export const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 500,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  // Kecualikan webhook Midtrans agar callback server-to-server tidak pernah kena rate limit (PRD §5.4)
+  skip: (req) =>
+    req.path === '/payments/webhook' || req.originalUrl.startsWith('/api/payments/webhook'),
+  message: {
+    success: false,
+    message: 'Terlalu banyak permintaan dari IP ini, silakan coba lagi setelah 15 menit.',
+  },
+});
+app.use('/api', apiLimiter);
+
 // -------------------------------------------------------
-// 2. Body Parsing
+// 3. Body Parsing
 // -------------------------------------------------------
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // -------------------------------------------------------
-// 3. Keamanan — Header dasar
+// 4. Keamanan — Header dasar
 // -------------------------------------------------------
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -51,12 +75,12 @@ app.use((_req, res, next) => {
 });
 
 // -------------------------------------------------------
-// 4. Audit Logger (non-blocking)
+// 5. Audit Logger (non-blocking)
 // -------------------------------------------------------
 app.use(auditLogger);
 
 // -------------------------------------------------------
-// 5. Health Check — sebelum router utama
+// 6. Health Check — sebelum router utama
 // -------------------------------------------------------
 app.get(['/health', '/api/health'], (_req: Request, res: Response) => {
   res.status(200).json({
@@ -68,22 +92,22 @@ app.get(['/health', '/api/health'], (_req: Request, res: Response) => {
 });
 
 // Kunci target folder baca agar PERSIS SAMA dengan Multer
-const targetFolder = path.resolve(__dirname, '../uploads');
+const targetFolder = path.join(process.cwd(), 'uploads');
 console.log('📂 Static Server membaca dari:', targetFolder);
 app.use('/uploads', express.static(targetFolder));
 
 // -------------------------------------------------------
-// 6. Router Utama
+// 7. Router Utama
 // -------------------------------------------------------
 app.use('/api', router);
 
 // -------------------------------------------------------
-// 7. 404 Handler — route tidak ditemukan
+// 8. 404 Handler — route tidak ditemukan
 // -------------------------------------------------------
 app.use(notFound);
 
 // -------------------------------------------------------
-// 8. Global Error Handler — HARUS paling terakhir
+// 9. Global Error Handler — HARUS paling terakhir
 // -------------------------------------------------------
 app.use(globalErrorHandler);
 

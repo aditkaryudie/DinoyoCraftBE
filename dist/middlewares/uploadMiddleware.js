@@ -8,7 +8,7 @@ const multer_1 = __importDefault(require("multer"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 // Pastikan folder uploads tersedia secara otomatis
-const targetFolder = path_1.default.resolve(__dirname, '../../uploads');
+const targetFolder = path_1.default.join(process.cwd(), 'uploads');
 if (!fs_1.default.existsSync(targetFolder)) {
     fs_1.default.mkdirSync(targetFolder, { recursive: true });
 }

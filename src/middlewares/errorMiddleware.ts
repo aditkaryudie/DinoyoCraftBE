@@ -11,6 +11,9 @@ import { sendError } from '../utils/response.js';
  * Handler untuk route yang tidak ditemukan (404)
  */
 export const notFound = (req: Request, res: Response): void => {
+  res.locals['logCategory'] = 'system';
+  res.locals['logEventName'] = 'system.route.not_found';
+  res.locals['logMessage'] = `Route tidak ditemukan (404): ${req.method} ${req.originalUrl.split('?')[0]}`;
   sendError(
     res,
     `Route tidak ditemukan: ${req.method} ${req.originalUrl}`,
@@ -29,6 +32,8 @@ export const globalErrorHandler = (
   _next: NextFunction
 ): void => {
   console.error('🔥 Unhandled Error:', err);
+  res.locals['loggedError'] = err;
+  res.locals['logEventName'] = 'system.unhandled_error';
 
   const isDev = process.env['NODE_ENV'] === 'development';
 

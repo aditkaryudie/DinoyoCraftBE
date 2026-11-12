@@ -1,699 +1,925 @@
+// ============================================================
+//  src/controllers/orderController.ts
+//  Controller Transaksi, Pesanan, & Manajemen Status Pesanan
+// ============================================================
+
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
+import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendForbidden, sendError } from '../utils/response.js';
+import pusher from '../utils/pusher.js';
 import { sendPushNotificationToUser } from '../services/notificationService.js';
+import {
+  adjustProductStockAndVariant,
+  getVariantAvailableStock,
+} from './productController.js';
+import { platformFeeFor } from '../services/midtransService.js';
+import {
+  cancelRemoteChargeIfAny,
+  computeOrderDeadline,
+  toIsoWibString,
+  toMysqlWibDatetime,
+} from '../services/paymentGatewayService.js';
 
-const extractFirstImage = (imageUrls: any): string => {
-  if (!imageUrls) return '';
-  try {
-    const parsed = typeof imageUrls === 'string' ? JSON.parse(imageUrls) : imageUrls;
-    if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
-    if (typeof parsed === 'string') return parsed;
-  } catch {
-    return String(imageUrls);
+// ============================================================
+// HELPER — catat riwayat status pesanan (timeline tracking)
+// ============================================================
+export async function recordOrderStatusHistory(
+  orderId: number,
+  status: string,
+  trackingNumber?: string | null,
+  note?: string | null,
+  conn?: any
+): Promise<void> {
+  const query = 'INSERT INTO order_status_history (order_id, status, tracking_number, note) VALUES (?, ?, ?, ?)';
+  if (conn) {
+    await conn.query(query, [orderId, status, trackingNumber || null, note || null]);
+  } else {
+    await pool.query(query, [orderId, status, trackingNumber || null, note || null]);
   }
-  return '';
-};
+}
 
-export const checkoutOrder = async (req: Request, res: Response): Promise<void> => {
+
+// ============================================================
+// HELPER — total tagihan pembayar (satu angka untuk semua layar):
+// barang + ongkir + biaya platform (Midtrans channel fee ditanggung platform)
+// ============================================================
+export function computeOrderTotals(o: {
+  total_amount: any;
+  gateway_fee?: any;
+}): { base: number; platform: number; channel: number; total_due: number } {
+  const base = Math.round(Number(o.total_amount || 0));
+  const storedFee = Math.round(Number(o.gateway_fee ?? 0));
+  const platform = storedFee > 0 ? storedFee : platformFeeFor(base);
+  return { base, platform, channel: 0, total_due: base + platform };
+}
+
+export const checkout = async (req: Request, res: Response): Promise<void> => {
   const connection = await pool.getConnection();
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
-    }
-
-    let {
-      mitra_id,
-      address_id,
-      shipping_address,
-      shipping_method = 'Regular',
-      shipping_cost = 15000,
-      voucher_discount = 0,
-      payment_method = 'qris',
-      customer_notes,
-      notes,
-      items
-    } = req.body;
-
     await connection.beginTransaction();
 
-    // Jika items tidak dikirim di body, ambil dari tabel carts milik user
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      const [cartRows]: any = await connection.query(
-        `SELECT c.product_id, c.quantity, c.variant, p.price AS unit_price, p.mitra_id
-         FROM carts c
-         INNER JOIN products p ON c.product_id = p.id
-         WHERE c.user_id = ?`,
-        [userId]
-      );
-      items = cartRows || [];
-    }
+    const userId = res.locals['userId'];
+    const {
+      mitra_id,
+      address_id,
+      shipping_method = 'Reguler',
+      shipping_cost = 0,
+      customer_notes = null,
+      payment_method = 'qris',
+      items,
+    } = req.body;
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
+    // 1. Validasi Alamat
+    const [addresses]: any = await connection.query(
+      'SELECT id, full_address, recipient_name, phone FROM user_addresses WHERE id = ? AND user_id = ?',
+      [address_id, userId]
+    );
+
+    if (addresses.length === 0) {
       await connection.rollback();
-      res.status(400).json({ success: false, message: 'Item pesanan tidak boleh kosong' });
+      sendBadRequest(res, 'Alamat pengiriman tidak valid.');
       return;
     }
 
-    // Validasi setiap product_id terhadap tabel products agar FK aman
-    const resolvedItems: Array<{
-      product_id: number;
-      quantity: number;
-      unit_price: number;
-      variant: string | null;
-      mitra_id?: number;
-    }> = [];
+    // 2. Validasi Mitra
+    const [mitras]: any = await connection.query(
+      'SELECT id, user_id, store_name FROM mitra_profiles WHERE id = ? AND is_active = 1',
+      [mitra_id]
+    );
 
-    for (const rawItem of items) {
-      let pid = Number(rawItem.product_id) || 0;
-      const qty = Math.max(1, Number(rawItem.quantity) || 1);
-      let unitPrice = Number(rawItem.unit_price ?? rawItem.price_at_purchase ?? rawItem.price ?? 0);
-      let prodMitraId: number | undefined;
+    if (mitras.length === 0) {
+      await connection.rollback();
+      sendBadRequest(res, 'Toko mitra tidak valid atau sedang tidak aktif.');
+      return;
+    }
 
-      const [prodCheck]: any = await connection.query(
-        'SELECT id, price, mitra_id FROM products WHERE id = ? LIMIT 1',
-        [pid]
+    // 3. Validasi Produk & Hitung Subtotal
+    let totalItemsAmount = 0;
+    const validatedItems: any[] = [];
+
+    for (const item of items) {
+      const [prodRows]: any = await connection.query(
+        'SELECT id, name, price, stock, variants, is_deleted FROM products WHERE id = ? FOR UPDATE',
+        [item.product_id]
       );
-      if (prodCheck && prodCheck.length > 0) {
-        pid = prodCheck[0].id;
-        if (!unitPrice) unitPrice = Number(prodCheck[0].price);
-        prodMitraId = prodCheck[0].mitra_id;
-      } else {
-        const [fallbackProd]: any = await connection.query(
-          'SELECT id, price, mitra_id FROM products ORDER BY id ASC LIMIT 1'
-        );
-        if (fallbackProd && fallbackProd.length > 0) {
-          pid = fallbackProd[0].id;
-          if (!unitPrice) unitPrice = Number(fallbackProd[0].price);
-          prodMitraId = fallbackProd[0].mitra_id;
-        }
+
+      if (prodRows.length === 0 || prodRows[0].is_deleted) {
+        await connection.rollback();
+        sendBadRequest(res, `Produk dengan ID ${item.product_id} tidak ditemukan atau sudah dihapus.`);
+        return;
       }
 
-      resolvedItems.push({
-        product_id: pid,
-        quantity: qty,
+      const prod = prodRows[0];
+      const availableStock = getVariantAvailableStock(prod.variants, Number(prod.stock) || 0, item.variant);
+      if (availableStock < item.quantity) {
+        await connection.rollback();
+        sendBadRequest(res, `Stok produk '${prod.name}' tidak mencukupi (tersedia: ${availableStock}, diminta: ${item.quantity}).`);
+        return;
+      }
+
+      const unitPrice = Number(prod.price);
+      totalItemsAmount += unitPrice * item.quantity;
+
+      validatedItems.push({
+        product_id: prod.id,
+        name: prod.name,
+        quantity: item.quantity,
         unit_price: unitPrice,
-        variant: rawItem.variant ? String(rawItem.variant) : null,
-        mitra_id: prodMitraId
+        variant: item.variant || null,
       });
     }
 
-    // Tentukan mitra_id (harus valid di tabel mitra_profiles)
-    let resolvedMitraId = Number(mitra_id) || resolvedItems[0]?.mitra_id || 0;
-    if (resolvedMitraId > 0) {
-      const [mitraRows]: any = await connection.query(
-        'SELECT id FROM mitra_profiles WHERE id = ? OR user_id = ? LIMIT 1',
-        [resolvedMitraId, resolvedMitraId]
-      );
-      if (mitraRows && mitraRows.length > 0) {
-        resolvedMitraId = mitraRows[0].id;
-      } else {
-        resolvedMitraId = 0;
-      }
-    }
-    if (!resolvedMitraId) {
-      const [firstMitra]: any = await connection.query(
-        'SELECT id FROM mitra_profiles ORDER BY id ASC LIMIT 1'
-      );
-      resolvedMitraId = firstMitra?.[0]?.id || 1;
-    }
+    const grandTotal = totalItemsAmount + Number(shipping_cost);
 
-    // Tentukan address_id dan shipping_address
-    let resolvedAddressId: number | null = address_id ? Number(address_id) : null;
-    let resolvedShippingAddress = shipping_address ? String(shipping_address) : '';
+    // 4. Buat Kode Referensi Transaksi Unik
+    const refCode = `TRX-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    if (resolvedAddressId) {
-      const [addrRows]: any = await connection.query(
-        'SELECT id, recipient_name, phone, full_address FROM user_addresses WHERE id = ? LIMIT 1',
-        [resolvedAddressId]
-      );
-      if (addrRows && addrRows.length > 0) {
-        if (!resolvedShippingAddress) {
-          resolvedShippingAddress = `${addrRows[0].recipient_name} (${addrRows[0].phone}) - ${addrRows[0].full_address}`;
-        }
-      } else {
-        resolvedAddressId = null;
-      }
-    }
+    // 5. Simpan ke Tabel Transactions (gateway_fee & expiry_time tetap dihitung resmi di BE)
+    const platformFee = platformFeeFor(grandTotal);
+    const createdAt = new Date();
+    const deadline = computeOrderDeadline(createdAt);
+    const mysqlExpiry = toMysqlWibDatetime(deadline);
+    const [trxResult]: any = await connection.query(
+      `INSERT INTO transactions (user_id, transaction_type, amount, gateway_fee, status, reference_code, notes, expiry_time)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      [userId, payment_method, grandTotal, platformFee, refCode, customer_notes, mysqlExpiry]
+    );
+    const transactionId = trxResult.insertId;
 
-    if (!resolvedShippingAddress) {
-      const [defaultAddr]: any = await connection.query(
-        'SELECT id, recipient_name, phone, full_address FROM user_addresses WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1',
-        [userId]
-      );
-      if (defaultAddr && defaultAddr.length > 0) {
-        resolvedAddressId = resolvedAddressId || defaultAddr[0].id;
-        resolvedShippingAddress = `${defaultAddr[0].recipient_name} (${defaultAddr[0].phone}) - ${defaultAddr[0].full_address}`;
-      } else {
-        resolvedShippingAddress = 'Alamat Pengiriman Pelanggan';
-      }
-    }
-
-    // Hitung nominal
-    let itemsTotal = 0;
-    for (const item of resolvedItems) {
-      itemsTotal += Number(item.unit_price) * Number(item.quantity);
-    }
-    const shipCost = Number(shipping_cost) || 0;
-    const voucherDisc = Number(voucher_discount) || 0;
-    const baseAmount = Math.max(0, itemsTotal + shipCost - voucherDisc);
-    const platformFee = 1000 + Math.round((baseAmount * 5) / 100);
-    const channelFee = Math.round(((baseAmount + platformFee) * 705) / 100000);
-    const applicationFee =
-      req.body.application_fee !== undefined
-        ? Number(req.body.application_fee)
-        : platformFee + channelFee;
-    const totalDue = baseAmount + applicationFee;
-
-    const orderNotes =
-      typeof customer_notes === 'string'
-        ? customer_notes
-        : typeof notes === 'string'
-        ? notes
-        : notes
-        ? JSON.stringify(notes)
-        : null;
-
-    // 1. Buat order di tabel orders
+    // 6. Simpan ke Tabel Orders
     const [orderResult]: any = await connection.query(
-      `INSERT INTO orders (
-         user_id, mitra_id, address_id, shipping_address, shipping_method,
-         shipping_cost, product_amount, application_fee, voucher_discount,
-         total_amount, total_due, notes, status, expires_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', DATE_ADD(NOW(), INTERVAL 24 HOUR), NOW(), NOW())`,
-      [
-        userId,
-        resolvedMitraId,
-        resolvedAddressId,
-        resolvedShippingAddress,
-        shipping_method || 'Regular',
-        shipCost,
-        itemsTotal,
-        applicationFee,
-        voucherDisc,
-        baseAmount,
-        totalDue,
-        orderNotes
-      ]
+      `INSERT INTO orders (user_id, mitra_id, address_id, transaction_id, total_amount, shipping_cost, shipping_method, customer_notes, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [userId, mitra_id, address_id, transactionId, grandTotal, shipping_cost, shipping_method, customer_notes]
     );
     const orderId = orderResult.insertId;
 
-    // 2. Buat transaksi di tabel transactions
-    const refCode = `TRX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const [txResult]: any = await connection.query(
-      `INSERT INTO transactions (
-         order_id, user_id, mitra_id, transaction_type, amount, status,
-         reference_code, payment_method, notes, created_at, updated_at
-       ) VALUES (?, ?, ?, 'order_payment', ?, 'pending', ?, ?, ?, NOW(), NOW())`,
+    // 7. Simpan ke Tabel Order Items & Kurangi Stok Produk
+    for (const item of validatedItems) {
+      await connection.query(
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, variant)
+         VALUES (?, ?, ?, ?, ?)`,
+        [orderId, item.product_id, item.quantity, item.unit_price, item.variant]
+      );
+
+      await adjustProductStockAndVariant(
+        connection,
+        item.product_id,
+        -item.quantity,
+        item.variant
+      );
+
+      // Hapus item dari keranjang user jika ada
+      await connection.query(
+        'DELETE FROM carts WHERE user_id = ? AND product_id = ?',
+        [userId, item.product_id]
+      );
+    }
+
+    // 7b. Catat status awal untuk timeline tracking
+    await recordOrderStatusHistory(orderId, 'pending', null, 'Pesanan dibuat, menunggu pembayaran', connection);
+
+    // 8. Kirim Notifikasi Sistem ke Mitra & Pelanggan
+    await connection.query(
+      `INSERT INTO notifications (user_id, title, message, type, reference_id)
+       VALUES (?, ?, ?, 'order', ?)`,
       [
+        mitras[0].user_id,
+        'Pesanan Baru Masuk!',
+        `Toko Anda menerima pesanan baru #${orderId} sebesar Rp ${grandTotal.toLocaleString('id-ID')}.`,
         orderId,
-        userId,
-        resolvedMitraId,
-        totalDue,
-        refCode,
-        payment_method || 'qris',
-        orderNotes || 'Pembelian produk keramik'
       ]
     );
-    const txId = txResult.insertId;
 
-    // 3. Masukkan items ke order_items
-    for (const item of resolvedItems) {
-      await connection.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, price_at_purchase, variant)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [orderId, item.product_id, item.quantity, item.unit_price, item.unit_price, item.variant]
-      );
-
-      // Kurangi stok produk
-      await connection.query(
-        'UPDATE products SET stock = GREATEST(0, stock - ?) WHERE id = ?',
-        [item.quantity, item.product_id]
-      );
-    }
-
-    // 4. Hapus item dari keranjang user
-    await connection.query('DELETE FROM carts WHERE user_id = ?', [userId]);
-
-    // 5. Simpan notifikasi in-app untuk pembeli dan mitra
-    await connection
-      .query(
-        `INSERT INTO notifications (user_id, title, body, type, reference_id, is_read, created_at)
-         VALUES (?, ?, ?, 'order', ?, 0, NOW())`,
-        [
-          userId,
-          'Pesanan Berhasil Dibuat! 🛒',
-          `Pesanan #${orderId} senilai Rp ${totalDue.toLocaleString('id-ID')} telah dibuat. Silakan selesaikan pembayaran Anda.`,
-          String(orderId)
-        ]
-      )
-      .catch(() => {});
-
-    const [mitraOwner]: any = await connection.query(
-      'SELECT user_id FROM mitra_profiles WHERE id = ? LIMIT 1',
-      [resolvedMitraId]
+    await connection.query(
+      `INSERT INTO notifications (user_id, title, message, type, reference_id)
+       VALUES (?, ?, ?, 'order', ?)`,
+      [
+        userId,
+        'Pesanan Berhasil Dibuat',
+        `Pesanan #${orderId} di toko ${mitras[0].store_name} berhasil dibuat. Silakan selesaikan pembayaran.`,
+        orderId,
+      ]
     );
-    if (mitraOwner && mitraOwner.length > 0) {
-      await connection
-        .query(
-          `INSERT INTO notifications (user_id, title, body, type, reference_id, is_read, created_at)
-           VALUES (?, ?, ?, 'order', ?, 0, NOW())`,
-          [
-            mitraOwner[0].user_id,
-            'Pesanan Baru Masuk! 📦',
-            `Pesanan baru #${orderId} telah dibuat oleh pelanggan.`,
-            String(orderId)
-          ]
-        )
-        .catch(() => {});
-    }
 
     await connection.commit();
 
-    // 6. Notifikasi via FCM ke user pembeli
-    sendPushNotificationToUser(
-      userId,
-      'Pesanan Berhasil Dibuat! 🛒',
-      `Pesanan #${orderId} telah dibuat. Silakan selesaikan pembayaran Anda.`,
-      { type: 'order', order_id: String(orderId), ref_code: refCode }
-    ).catch(() => {});
-
-    res.status(201).json({
-      success: true,
-      message: 'Checkout berhasil dibuat',
-      data: {
+    sendCreated(
+      res,
+      {
         order_id: orderId,
-        transaction_id: txId,
         reference_code: refCode,
-        product_amount: itemsTotal,
-        shipping_cost: shipCost,
-        application_fee: applicationFee,
-        total_amount: baseAmount,
-        total_due: totalDue,
-        status: 'pending'
-      }
-    });
+        total_amount: grandTotal,
+        platform_fee: platformFee,
+        channel_fee: 0,
+        total_due: grandTotal + platformFee,
+        payment_method,
+        status: 'pending',
+        created_at: toIsoWibString(createdAt),
+        expiry_time: toIsoWibString(deadline),
+      },
+      'Pesanan berhasil dibuat.'
+    );
   } catch (error) {
     await connection.rollback();
-    console.error('Error checkoutOrder:', error);
-    res.status(500).json({ success: false, message: 'Gagal melakukan checkout' });
+    console.error('❌ [checkout] Error:', error);
+    sendError(res, 'Gagal memproses pesanan.');
   } finally {
     connection.release();
   }
 };
 
-export const getOrders = async (req: Request, res: Response): Promise<void> => {
+export const getUserOrders = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
-    }
-
+    const userId = res.locals['userId'];
     const { status } = req.query;
+
     let query = `
       SELECT 
         o.id,
-        o.user_id,
-        o.mitra_id,
-        o.address_id,
-        o.shipping_address,
-        o.shipping_method,
-        o.shipping_cost,
-        o.product_amount,
-        o.application_fee,
-        o.voucher_discount,
         o.total_amount,
-        o.total_due,
-        o.notes,
-        o.status,
+        o.shipping_cost,
+        o.shipping_method,
         o.tracking_number,
-        o.expires_at,
+        t.gateway_fee,
+        o.customer_notes,
+        o.status,
         o.created_at,
-        o.updated_at,
+        m.id AS mitra_id,
         m.store_name,
-        t.id AS transaction_id,
+        m.whatsapp_number AS mitra_phone,
         t.reference_code,
+        t.transaction_type AS payment_method,
         t.status AS payment_status,
-        t.payment_method
+        t.expiry_time,
+        t.paid_at
       FROM orders o
-      LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
-      LEFT JOIN transactions t ON t.order_id = o.id
+      JOIN mitra_profiles m ON o.mitra_id = m.id
+      LEFT JOIN transactions t ON o.transaction_id = t.id
       WHERE o.user_id = ?
     `;
-    const params: any[] = [userId];
 
-    if (status && status !== 'all') {
+    const params: any[] = [userId];
+    if (status) {
       query += ' AND o.status = ?';
       params.push(status);
     }
-
     query += ' ORDER BY o.id DESC';
 
-    const [rows]: any = await pool.query(query, params);
+    const [orders]: any = await pool.query(query, params);
 
-    for (const order of rows) {
+    // Ambil order items untuk masing-masing order
+    for (const order of orders) {
       const [items]: any = await pool.query(
-        `SELECT oi.id, oi.product_id, oi.quantity, oi.price_at_purchase, oi.variant,
-                p.name AS product_name, p.image_urls
+        `SELECT 
+           oi.id,
+           oi.product_id,
+           oi.quantity,
+           oi.unit_price,
+           oi.variant,
+           p.name AS product_name,
+           p.image_urls
          FROM order_items oi
-         LEFT JOIN products p ON oi.product_id = p.id
+         JOIN products p ON oi.product_id = p.id
          WHERE oi.order_id = ?`,
         [order.id]
       );
-      order.items = items.map((it: any) => {
-        const img = extractFirstImage(it.image_urls);
-        const unitPrice = Number(it.price_at_purchase || 0);
-        return {
+
+      order.items = items.map((item: any) => {
+        let images = [];
+        if (typeof item.image_urls === 'string') {
+          try { images = JSON.parse(item.image_urls); } catch { images = []; }
+        } else if (Array.isArray(item.image_urls)) {
+          images = item.image_urls;
+        }
+        return { ...item, image_urls: images };
+      });
+    }
+
+    // Normalisasi angka: mysql2 mengembalikan DECIMAL sebagai string —
+    // kirim sebagai number agar klien mobile tidak salah parse.
+    const normalized = (orders as any[]).map((o) => {
+      const totals = computeOrderTotals(o);
+      const deadline =
+        o.status === 'pending'
+          ? toIsoWibString(computeOrderDeadline(o.created_at, o.expiry_time))
+          : toIsoWibString(o.expiry_time);
+      return {
+        ...o,
+        created_at: toIsoWibString(o.created_at) ?? o.created_at,
+        expiry_time: deadline,
+        paid_at: toIsoWibString(o.paid_at),
+        total_amount: Number(o.total_amount ?? 0),
+        shipping_cost: Number(o.shipping_cost ?? 0),
+        platform_fee: totals.platform,
+        channel_fee: totals.channel,
+        total_due: totals.total_due,
+        items: (o.items || []).map((it: any) => ({
           ...it,
-          unit_price: unitPrice,
-          price_at_purchase: unitPrice,
-          price: unitPrice,
-          image: img,
-          product_image: img
-        };
-      });
-    }
+          quantity: Number(it.quantity ?? 0),
+          unit_price: Number(it.unit_price ?? 0),
+        })),
+      };
+    });
 
-    res.status(200).json({ success: true, data: rows });
+    sendSuccess(res, normalized, 'Daftar riwayat pesanan berhasil diambil.');
   } catch (error) {
-    console.error('Error getOrders:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengambil riwayat pesanan' });
+    console.error('❌ [getUserOrders] Error:', error);
+    sendError(res, 'Gagal mengambil riwayat pesanan.');
   }
 };
 
-export const getOrderDetail = async (req: Request, res: Response): Promise<void> => {
+export const getOrderById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    const userId = res.locals['userId'];
+    const role = res.locals['role'];
     const { id } = req.params;
 
-    const [rows]: any = await pool.query(
+    const [orders]: any = await pool.query(
       `SELECT 
-        o.id,
-        o.user_id,
-        o.mitra_id,
-        o.address_id,
-        o.shipping_address,
-        o.shipping_method,
-        o.shipping_cost,
-        o.product_amount,
-        o.application_fee,
-        o.voucher_discount,
-        o.total_amount,
-        o.total_due,
-        o.notes,
-        o.status,
-        o.tracking_number,
-        o.expires_at,
-        o.created_at,
-        o.updated_at,
-        m.store_name,
-        m.workshop_address,
-        m.whatsapp_number AS store_phone,
-        t.id AS transaction_id,
-        t.reference_code,
-        t.status AS payment_status,
-        t.payment_method,
-        a.recipient_name,
-        a.phone AS recipient_phone,
-        a.full_address
-      FROM orders o
-      LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
-      LEFT JOIN transactions t ON t.order_id = o.id
-      LEFT JOIN user_addresses a ON o.address_id = a.id
-      WHERE o.id = ? AND (o.user_id = ? OR o.mitra_id IN (SELECT id FROM mitra_profiles WHERE user_id = ?))
-      LIMIT 1`,
-      [id, userId, userId]
-    );
-
-    if (!rows || rows.length === 0) {
-      res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
-      return;
-    }
-
-    const order = rows[0];
-
-    const [items]: any = await pool.query(
-      `SELECT oi.id, oi.product_id, oi.quantity, oi.price_at_purchase, oi.variant,
-              p.name AS product_name, p.image_urls
-       FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [id]
-    );
-
-    order.items = items.map((it: any) => {
-      const img = extractFirstImage(it.image_urls);
-      const unitPrice = Number(it.price_at_purchase || 0);
-      return {
-        ...it,
-        unit_price: unitPrice,
-        price_at_purchase: unitPrice,
-        price: unitPrice,
-        image: img,
-        product_image: img
-      };
-    });
-
-    res.status(200).json({ success: true, data: order });
-  } catch (error) {
-    console.error('Error getOrderDetail:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengambil detail pesanan' });
-  }
-};
-
-export const getOrderTracking = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const [rows]: any = await pool.query(
-      `SELECT o.id, o.status, o.tracking_number, o.shipping_method, o.shipping_address,
-              o.total_amount, o.total_due, o.created_at, o.updated_at,
-              m.store_name
+         o.*,
+         m.store_name,
+         m.whatsapp_number AS mitra_phone,
+         m.workshop_address,
+         m.user_id AS mitra_user_id,
+         a.recipient_name,
+         a.phone AS recipient_phone,
+         a.full_address,
+         a.city,
+         a.postal_code,
+         t.reference_code,
+         t.transaction_type AS payment_method,
+         t.status AS payment_status,
+         t.payment_token,
+         t.inv_id,
+         t.payment_url,
+         t.qr_string,
+         t.gateway_fee,
+         t.expiry_time,
+         t.paid_at
        FROM orders o
-       LEFT JOIN mitra_profiles m ON o.mitra_id = m.id
-       WHERE o.id = ?
-       LIMIT 1`,
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN user_addresses a ON o.address_id = a.id
+       LEFT JOIN transactions t ON o.transaction_id = t.id
+       WHERE o.id = ?`,
       [id]
     );
 
-    if (!rows || rows.length === 0) {
-      res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
-      return;
-    }
-
-    const order = rows[0];
-    const [items]: any = await pool.query(
-      `SELECT oi.id, oi.product_id, oi.quantity, oi.price_at_purchase, oi.variant,
-              p.name AS product_name, p.image_urls
-       FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [id]
-    );
-
-    const mappedItems = items.map((it: any) => {
-      const img = extractFirstImage(it.image_urls);
-      return {
-        ...it,
-        unit_price: Number(it.price_at_purchase || 0),
-        price_at_purchase: Number(it.price_at_purchase || 0),
-        product_image: img,
-        image: img
-      };
-    });
-
-    const createdAt = order.created_at ? new Date(order.created_at) : new Date();
-    const updatedAt = order.updated_at ? new Date(order.updated_at) : createdAt;
-
-    const timeline: Array<{ status: string; created_at: string; note: string }> = [
-      {
-        status: 'pending',
-        created_at: createdAt.toISOString(),
-        note: 'Pesanan berhasil dibuat dan menunggu pembayaran.'
-      }
-    ];
-
-    if (['paid', 'packed', 'shipped', 'completed'].includes(order.status)) {
-      timeline.push({
-        status: 'paid',
-        created_at: new Date(createdAt.getTime() + 60 * 1000).toISOString(),
-        note: 'Pembayaran telah terverifikasi secara otomatis.'
-      });
-    }
-    if (['packed', 'shipped', 'completed'].includes(order.status)) {
-      timeline.push({
-        status: 'packed',
-        created_at: new Date(createdAt.getTime() + 5 * 60 * 1000).toISOString(),
-        note: `Pesanan sedang dikemas oleh pengrajin ${order.store_name || 'Mitra DinoyoCraft'}.`
-      });
-    }
-    if (['shipped', 'completed'].includes(order.status)) {
-      timeline.push({
-        status: 'shipped',
-        created_at: updatedAt.toISOString(),
-        note: order.tracking_number
-          ? `Pesanan diserahkan ke kurir (${order.shipping_method || 'Reguler'}) dengan No. Resi: ${order.tracking_number}.`
-          : `Pesanan sedang dalam pengiriman via ${order.shipping_method || 'kurir ekspedisi'}.`
-      });
-    }
-    if (order.status === 'completed') {
-      timeline.push({
-        status: 'completed',
-        created_at: updatedAt.toISOString(),
-        note: 'Pesanan telah diterima oleh pembeli. Transaksi selesai.'
-      });
-    }
-    if (order.status === 'cancelled') {
-      timeline.push({
-        status: 'cancelled',
-        created_at: updatedAt.toISOString(),
-        note: 'Pesanan telah dibatalkan.'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        ...order,
-        items: mappedItems,
-        timeline: timeline.reverse()
-      }
-    });
-  } catch (error) {
-    console.error('Error getOrderTracking:', error);
-    res.status(500).json({ success: false, message: 'Gagal memuat pelacakan pesanan' });
-  }
-};
-
-export const cancelOrder = async (req: Request, res: Response): Promise<void> => {
-  const connection = await pool.getConnection();
-  try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    const { id } = req.params;
-
-    await connection.beginTransaction();
-
-    const [orders]: any = await connection.query(
-      'SELECT * FROM orders WHERE id = ? LIMIT 1',
-      [id]
-    );
-    if (!orders || orders.length === 0) {
-      await connection.rollback();
-      res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
+    if (orders.length === 0) {
+      sendNotFound(res, 'Pesanan tidak ditemukan.');
       return;
     }
 
     const order = orders[0];
-    if (order.user_id !== Number(userId) && res.locals['role'] !== 'admin' && res.locals['role'] !== 'mitra') {
-      await connection.rollback();
-      res.status(403).json({ success: false, message: 'Tidak diizinkan membatalkan pesanan ini' });
+
+    // Cek otorisasi: hanya pembeli, mitra pemilik toko, atau admin yang boleh melihat
+    if (role !== 'admin' && order.user_id !== userId && order.mitra_user_id !== userId) {
+      sendForbidden(res, 'Anda tidak memiliki hak untuk melihat pesanan ini.');
       return;
     }
 
-    await connection.query(
-      `UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = ?`,
-      [id]
-    );
-    await connection.query(
-      `UPDATE transactions SET status = 'cancelled', updated_at = NOW() WHERE order_id = ?`,
+    const [items]: any = await pool.query(
+      `SELECT 
+         oi.*,
+         p.name AS product_name,
+         p.image_urls
+       FROM order_items oi
+       JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = ?`,
       [id]
     );
 
-    // Kembalikan stok produk
-    const [items]: any = await connection.query(
-      'SELECT product_id, quantity FROM order_items WHERE order_id = ?',
-      [id]
-    );
-    for (const item of items || []) {
-      await connection.query(
-        'UPDATE products SET stock = stock + ? WHERE id = ?',
-        [item.quantity, item.product_id]
+    order.items = items.map((item: any) => {
+      let images = [];
+      if (typeof item.image_urls === 'string') {
+        try { images = JSON.parse(item.image_urls); } catch { images = []; }
+      } else if (Array.isArray(item.image_urls)) {
+        images = item.image_urls;
+      }
+      return { ...item, image_urls: images };
+    });
+
+    const deadline =
+      order.status === 'pending'
+        ? toIsoWibString(computeOrderDeadline(order.created_at, order.expiry_time))
+        : toIsoWibString(order.expiry_time);
+    order.created_at = toIsoWibString(order.created_at) ?? order.created_at;
+    order.expiry_time = deadline;
+    order.paid_at = toIsoWibString(order.paid_at);
+
+    sendSuccess(res, order, 'Detail pesanan berhasil diambil.');
+  } catch (error) {
+    console.error('❌ [getOrderById] Error:', error);
+    sendError(res, 'Gagal mengambil detail pesanan.');
+  }
+};
+
+export const getMitraOrders = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    const { status } = req.query;
+
+    const [mitraRows]: any = await pool.query('SELECT id FROM mitra_profiles WHERE user_id = ?', [userId]);
+    if (mitraRows.length === 0) {
+      sendForbidden(res, 'Profil mitra tidak ditemukan.');
+      return;
+    }
+    const mitraId = mitraRows[0].id;
+
+    let query = `
+      SELECT 
+        o.id,
+        o.total_amount,
+        o.shipping_cost,
+        o.shipping_method,
+        o.tracking_number,
+        o.customer_notes,
+        o.status,
+        o.created_at,
+        u.name AS customer_name,
+        u.email AS customer_email,
+        a.recipient_name,
+        a.phone AS recipient_phone,
+        a.full_address,
+        a.city,
+        a.postal_code,
+        t.reference_code,
+        t.status AS payment_status
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+      LEFT JOIN user_addresses a ON o.address_id = a.id
+      LEFT JOIN transactions t ON o.transaction_id = t.id
+      WHERE o.mitra_id = ?
+    `;
+
+    const params: any[] = [mitraId];
+    if (status) {
+      query += ' AND o.status = ?';
+      params.push(status);
+    }
+    query += ' ORDER BY o.id DESC';
+
+    const [orders]: any = await pool.query(query, params);
+
+    for (const order of orders) {
+      const [items]: any = await pool.query(
+        `SELECT 
+           oi.*,
+           p.name AS product_name,
+           p.image_urls
+         FROM order_items oi
+         JOIN products p ON oi.product_id = p.id
+         WHERE oi.order_id = ?`,
+        [order.id]
       );
+      order.items = items;
     }
 
-    await connection.commit();
-
-    res.status(200).json({
-      success: true,
-      message: 'Pesanan berhasil dibatalkan',
-      data: { order_id: Number(id), status: 'cancelled' }
-    });
+    sendSuccess(res, orders, 'Daftar pesanan toko berhasil diambil.');
   } catch (error) {
-    await connection.rollback();
-    console.error('Error cancelOrder:', error);
-    res.status(500).json({ success: false, message: 'Gagal membatalkan pesanan' });
-  } finally {
-    connection.release();
+    console.error('❌ [getMitraOrders] Error:', error);
+    sendError(res, 'Gagal mengambil daftar pesanan toko.');
   }
 };
 
 export const updateOrderStatus = async (req: Request, res: Response): Promise<void> => {
+  const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
+
+    const userId = res.locals['userId'];
+    const role = res.locals['role'];
     const { id } = req.params;
     const { status, tracking_number, shipping_method } = req.body;
 
-    const [orders]: any = await pool.query('SELECT * FROM orders WHERE id = ? LIMIT 1', [id]);
-    if (!orders || orders.length === 0) {
-      res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
+    const [orders]: any = await connection.query(
+      `SELECT o.*, m.user_id AS mitra_user_id 
+       FROM orders o
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       WHERE o.id = ? FOR UPDATE`,
+      [id]
+    );
+
+    if (orders.length === 0) {
+      await connection.rollback();
+      sendNotFound(res, 'Pesanan tidak ditemukan.');
       return;
     }
 
     const order = orders[0];
-    await pool.query(
-      `UPDATE orders 
-       SET status = COALESCE(?, status), 
-           tracking_number = COALESCE(?, tracking_number),
-           shipping_method = COALESCE(?, shipping_method),
-           updated_at = NOW() 
-       WHERE id = ?`,
-      [status ?? null, tracking_number ?? null, shipping_method ?? null, id]
-    );
+    const isMitraOrAdmin = role === 'admin' || order.mitra_user_id === userId;
+    const isBuyerCompleting = order.user_id === userId && status === 'completed';
 
-    if (status === 'paid' || status === 'completed') {
-      await pool.query(
-        `UPDATE transactions SET status = 'success', updated_at = NOW() WHERE order_id = ?`,
+    // Mitra/Admin berhak mengelola alur pengiriman; Pembeli berhak mengonfirmasi 'completed' saat 'shipped'
+    if (!isMitraOrAdmin && !isBuyerCompleting) {
+      await connection.rollback();
+      sendForbidden(res, 'Anda tidak berwenang mengubah status pesanan ini.');
+      return;
+    }
+
+    if (order.status === status) {
+      await connection.rollback();
+      sendSuccess(
+        res,
+        {
+          order_id: Number(id),
+          status: order.status,
+          tracking_number: order.tracking_number,
+          shipping_method: order.shipping_method,
+        },
+        'Status pesanan sudah sesuai.'
+      );
+      return;
+    }
+
+    // Validasi transisi status e-commerce
+    if (order.status === 'cancelled' || order.status === 'completed') {
+      await connection.rollback();
+      sendBadRequest(res, `Pesanan berstatus "${order.status}" sudah final dan tidak dapat diubah.`);
+      return;
+    }
+
+    if (order.status === 'pending' && ['packed', 'shipped', 'completed'].includes(status)) {
+      await connection.rollback();
+      sendBadRequest(res, 'Pesanan belum dibayar sehingga belum dapat dikemas, dikirim, atau diselesaikan.');
+      return;
+    }
+
+    if (status === 'completed' && !['shipped', 'packed'].includes(order.status)) {
+      await connection.rollback();
+      sendBadRequest(res, 'Pesanan harus berstatus dikirim sebelum dapat ditandai selesai.');
+      return;
+    }
+
+    // Jika pesanan dibatalkan (cancelled), kembalikan stok produk
+    if (status === 'cancelled' && order.status !== 'cancelled') {
+      const [items]: any = await connection.query(
+        'SELECT product_id, quantity, variant FROM order_items WHERE order_id = ?',
         [id]
       );
-    } else if (status === 'cancelled') {
-      await pool.query(
-        `UPDATE transactions SET status = 'cancelled', updated_at = NOW() WHERE order_id = ?`,
-        [id]
+      for (const item of items) {
+        await adjustProductStockAndVariant(
+          connection,
+          item.product_id,
+          item.quantity,
+          item.variant
+        );
+      }
+      if (order.transaction_id) {
+        await connection.query(
+          "UPDATE transactions SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
+          [order.transaction_id]
+        );
+      }
+    }
+
+    const nextTracking = tracking_number ? String(tracking_number).trim() : null;
+    const nextShippingMethod = shipping_method ? String(shipping_method).trim() : null;
+
+    await connection.query(
+      `UPDATE orders SET 
+         status = ?,
+         tracking_number = COALESCE(?, tracking_number),
+         shipping_method = COALESCE(?, shipping_method)
+       WHERE id = ?`,
+      [status, nextTracking, nextShippingMethod, id]
+    );
+
+    // Kirim notifikasi status terbaru ke customer
+    const finalResi = nextTracking || order.tracking_number || '-';
+    const statusTitles: Record<string, string> = {
+      paid: 'Pembayaran Berhasil',
+      packed: 'Pesanan Sedang Dikemas',
+      shipped: 'Pesanan Sedang Dikirim',
+      completed: 'Pesanan Diterima & Selesai',
+      cancelled: 'Pesanan Dibatalkan',
+    };
+    const statusMessages: Record<string, string> = {
+      paid: `Pembayaran pesanan #${id} telah berhasil dikonfirmasi. Penjual akan segera memproses barang Anda.`,
+      packed: `Pesanan #${id} sedang dikemas dengan rapi oleh pengrajin.`,
+      shipped:
+        finalResi !== '-'
+          ? `Pesanan #${id} telah dikirim! No. Resi: ${finalResi}`
+          : `Pesanan #${id} telah dikirim oleh pengrajin!`,
+      completed: `Pesanan #${id} telah diterima dan selesai. Dana telah diteruskan ke penjual. Jangan lupa beri ulasan terbaik!`,
+      cancelled: `Pesanan #${id} telah dibatalkan.`,
+    };
+    const notifTitle = statusTitles[status] || `Status Pesanan #${id}: ${status.toUpperCase()}`;
+
+    if (statusMessages[status]) {
+      await connection.query(
+        `INSERT INTO notifications (user_id, title, message, type, reference_id)
+         VALUES (?, ?, ?, 'order', ?)`,
+        [order.user_id, notifTitle, statusMessages[status], id]
       );
     }
 
-    const newStatus = status || order.status;
-    await pool
-      .query(
-        `INSERT INTO notifications (user_id, title, body, type, reference_id, is_read, created_at)
-         VALUES (?, ?, ?, 'order', ?, 0, NOW())`,
+    // Saat selesai, beri notifikasi ke mitra bahwa dana sudah masuk Saldo Aktif
+    const mitraNominal = Number(order.total_amount || 0).toLocaleString('id-ID');
+    if (status === 'completed') {
+      await connection.query(
+        `INSERT INTO notifications (user_id, title, message, type, reference_id)
+         VALUES (?, ?, ?, 'order', ?)`,
         [
-          order.user_id,
-          'Status Pesanan Diperbarui! 📦',
-          `Pesanan #${order.id} telah diperbarui statusnya menjadi: ${newStatus}`,
-          String(order.id)
+          order.mitra_user_id,
+          'Dana Masuk ke Saldo Aktif!',
+          `Pesanan #${id} telah diterima pembeli. Dana sebesar Rp ${mitraNominal} kini masuk ke Saldo Aktif toko dan siap ditarik.`,
+          id,
         ]
-      )
-      .catch(() => {});
+      );
+    }
 
-    sendPushNotificationToUser(
-      order.user_id,
-      'Status Pesanan Diperbarui! 📦',
-      `Pesanan #${order.id} telah diperbarui statusnya menjadi: ${newStatus}`,
-      { type: 'order', order_id: String(order.id), status: newStatus }
-    ).catch(() => {});
+    // Catat ke timeline tracking (hanya jika status berubah)
+    if (order.status !== status) {
+      const notes: Record<string, string> = {
+        paid: 'Pembayaran terverifikasi',
+        packed: 'Penjual sedang mengemas pesanan',
+        shipped: nextShippingMethod
+          ? `Paket diserahkan ke kurir (${nextShippingMethod})`
+          : 'Paket diserahkan ke kurir',
+        completed: isBuyerCompleting
+          ? 'Pembeli mengonfirmasi pesanan diterima'
+          : 'Pesanan diterima dan selesai',
+        cancelled: 'Pesanan dibatalkan',
+      };
+      await recordOrderStatusHistory(
+        Number(id),
+        status,
+        nextTracking || order.tracking_number || null,
+        notes[status] || null,
+        connection
+      );
+    }
 
-    res.status(200).json({
-      success: true,
-      message: 'Status pesanan berhasil diperbarui',
-      data: {
+    await connection.commit();
+
+    // Dorong update realtime ke HP customer & mitra (non-blocking).
+    try {
+      await pusher.trigger(`user-${order.user_id}`, 'order-status-changed', {
         order_id: Number(id),
-        status: newStatus,
-        tracking_number: tracking_number || order.tracking_number
+        status,
+        title: notifTitle,
+        message: statusMessages[status] || '',
+        tracking_number: nextTracking || order.tracking_number || null,
+      });
+      if (status === 'completed') {
+        await pusher.trigger(`user-${order.mitra_user_id}`, 'order-completed', {
+          order_id: Number(id),
+          status: 'completed',
+          amount: Number(order.total_amount || 0),
+        });
       }
-    });
+    } catch { /* non-blocking */ }
+
+    // Push FCM ke HP customer & mitra (non-blocking).
+    if (statusMessages[status]) {
+      void sendPushNotificationToUser(
+        order.user_id,
+        notifTitle,
+        statusMessages[status],
+        { type: 'order', route: '/profile', order_id: String(id), status }
+      );
+    }
+    if (status === 'completed') {
+      void sendPushNotificationToUser(
+        order.mitra_user_id,
+        'Dana Masuk ke Saldo Aktif!',
+        `Pesanan #${id} selesai diterima pembeli. Rp ${mitraNominal} masuk ke Saldo Aktif.`,
+        { type: 'order', route: '/mitra/dashboard/laporan-keuangan', order_id: String(id), status }
+      );
+    }
+
+    sendSuccess(
+      res,
+      {
+        order_id: Number(id),
+        status,
+        tracking_number: nextTracking || order.tracking_number || null,
+        shipping_method: nextShippingMethod || order.shipping_method || null,
+      },
+      'Status pesanan berhasil diperbarui.'
+    );
   } catch (error) {
-    console.error('Error updateOrderStatus:', error);
-    res.status(500).json({ success: false, message: 'Gagal memperbarui status pesanan' });
+    await connection.rollback().catch(() => {});
+    console.error('❌ [updateOrderStatus] Error:', error);
+    sendError(res, 'Gagal memperbarui status pesanan.');
+  } finally {
+    connection.release();
   }
 };
+
+// ============================================================
+// POST /api/orders/:id/complete — Konfirmasi "Pesanan Diterima" oleh Pembeli
+// Memindahkan pendapatan pesanan dari Pendapatan Tertunda -> Saldo Aktif Mitra
+// ============================================================
+export const confirmOrderCompleted = async (req: Request, res: Response): Promise<void> => {
+  req.body = { ...(req.body || {}), status: 'completed' };
+  await updateOrderStatus(req, res);
+};
+
+
+
+// Aliases
+// ============================================================
+// POST /api/orders/:id/cancel — Pembatalan oleh PEMILIK pesanan
+// Hanya untuk pesanan 'pending' (belum bayar). Stok dikembalikan.
+// ============================================================
+export const cancelOrderByCustomer = async (req: Request, res: Response): Promise<void> => {
+  const connection = await pool.getConnection();
+  try {
+    const userId = res.locals['userId'];
+    const role = res.locals['role'];
+    const { id } = req.params;
+
+    const [orders]: any = await connection.query(
+      `SELECT o.*, m.user_id AS mitra_user_id, t.gateway_order_id
+       FROM orders o
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN transactions t ON o.transaction_id = t.id
+       WHERE o.id = ?`,
+      [id]
+    );
+
+    if (orders.length === 0) {
+      sendNotFound(res, 'Pesanan tidak ditemukan.');
+      return;
+    }
+    const order = orders[0];
+
+    // Hanya pemilik pesanan (atau admin) yang boleh membatalkan.
+    if (order.user_id !== userId && role !== 'admin') {
+      sendForbidden(res, 'Hanya pemilik pesanan yang dapat membatalkannya.');
+      return;
+    }
+
+    // Belum-bayar saja — pesanan yang sudah dibayar/diproses mengikuti alur mitra.
+    if (order.status !== 'pending') {
+      sendBadRequest(
+        res,
+        `Pesanan dengan status "${order.status}" tidak dapat dibatalkan langsung. Hubungi penjual bila diperlukan.`
+      );
+      return;
+    }
+
+    await connection.beginTransaction();
+
+    // Kembalikan stok produk.
+    const [items]: any = await connection.query(
+      'SELECT product_id, quantity, variant FROM order_items WHERE order_id = ?',
+      [id]
+    );
+    for (const item of items) {
+      await adjustProductStockAndVariant(
+        connection,
+        item.product_id,
+        item.quantity,
+        item.variant
+      );
+    }
+
+    await connection.query("UPDATE orders SET status = 'cancelled' WHERE id = ?", [id]);
+    await connection.query("UPDATE transactions SET status = 'cancelled' WHERE id = ?", [
+      order.transaction_id,
+    ]);
+    await recordOrderStatusHistory(Number(id), 'cancelled', null, 'Dibatalkan oleh pembeli', connection);
+
+    await connection.query(
+      `INSERT INTO notifications (user_id, title, message, type, reference_id)
+       VALUES (?, ?, ?, 'order', ?)`,
+      [
+        order.mitra_user_id,
+        'Pesanan Dibatalkan',
+        `Pesanan #${id} dibatalkan oleh pembeli sebelum pembayaran.`,
+        id,
+      ]
+    );
+
+    await connection.commit();
+
+    // Batalkan charge aktif di Midtrans Sandbox (best-effort agar VA/QR lama ikut invalid)
+    await cancelRemoteChargeIfAny(order.gateway_order_id);
+
+    try {
+      await pusher.trigger(`user-${order.mitra_user_id}`, 'order-status-changed', {
+        order_id: Number(id),
+        status: 'cancelled',
+      });
+    } catch { /* non-blocking */ }
+
+    void sendPushNotificationToUser(
+      order.mitra_user_id,
+      'Pesanan Dibatalkan',
+      `Pesanan #${id} dibatalkan oleh pembeli sebelum pembayaran.`,
+      { type: 'order', route: '/profile', order_id: String(id), status: 'cancelled' }
+    );
+
+    sendSuccess(res, { order_id: Number(id), status: 'cancelled' }, 'Pesanan berhasil dibatalkan.');
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    console.error('❌ [cancelOrderByCustomer] Error:', error);
+    sendError(res, 'Gagal membatalkan pesanan.');
+  } finally {
+    connection.release();
+  }
+};
+
+// ============================================================
+// GET /api/orders/:id/tracking — Timeline pelacakan pesanan
+// ============================================================
+export const getOrderTracking = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    const role = res.locals['role'];
+    const { id } = req.params;
+
+    const [orders]: any = await pool.query(
+      `SELECT o.id, o.user_id, o.status, o.tracking_number, o.shipping_method,
+              o.shipping_cost, o.total_amount, t.gateway_fee, o.created_at,
+              m.store_name, m.workshop_address,
+              t.reference_code
+       FROM orders o
+       JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN transactions t ON o.transaction_id = t.id
+       WHERE o.id = ?`,
+      [id]
+    );
+
+    if (orders.length === 0) {
+      sendNotFound(res, 'Pesanan tidak ditemukan.');
+      return;
+    }
+    const order = orders[0];
+
+    if (order.user_id !== userId && role !== 'admin') {
+      // mitra pemilik toko juga boleh melihat
+      const [own]: any = await pool.query(
+        'SELECT id FROM mitra_profiles WHERE user_id = ? AND id = (SELECT mitra_id FROM orders WHERE id = ?)',
+        [userId, id]
+      );
+      if (!own || own.length === 0) {
+        sendForbidden(res, 'Anda tidak berhak melihat pelacakan pesanan ini.');
+        return;
+      }
+    }
+
+    const [history]: any = await pool.query(
+      `SELECT status, tracking_number, note, created_at
+       FROM order_status_history
+       WHERE order_id = ?
+       ORDER BY id ASC`,
+      [id]
+    );
+
+    const [items]: any = await pool.query(
+      `SELECT oi.product_id, oi.quantity, oi.unit_price, oi.variant,
+              p.name AS product_name, p.image_urls
+       FROM order_items oi
+       JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = ?`,
+      [id]
+    );
+
+    const trackingTotals = computeOrderTotals(order);
+
+    sendSuccess(res, {
+      order_id: order.id,
+      status: order.status,
+      tracking_number: order.tracking_number,
+      shipping_method: order.shipping_method,
+      shipping_cost: Number(order.shipping_cost || 0),
+      total_amount: Number(order.total_amount || 0),
+      platform_fee: trackingTotals.platform,
+      channel_fee: trackingTotals.channel,
+      total_due: trackingTotals.total_due,
+      reference_code: order.reference_code,
+      store_name: order.store_name,
+      created_at: order.created_at,
+      timeline: history,
+      items: items.map((it: any) => {
+        let images: string[] = [];
+        try {
+          const raw = it.image_urls;
+          if (Array.isArray(raw)) images = raw;
+          else if (typeof raw === 'string' && raw.trim()) {
+            images = raw.trim().startsWith('[') ? JSON.parse(raw) : [raw];
+          }
+        } catch { /* ignore */ }
+        return {
+          product_id: it.product_id,
+          product_name: it.product_name,
+          quantity: it.quantity,
+          unit_price: Number(it.unit_price),
+          variant: it.variant,
+          image: images[0] || null,
+        };
+      }),
+    }, 'Timeline pelacakan berhasil diambil.');
+  } catch (error) {
+    console.error('❌ [getOrderTracking] Error:', error);
+    sendError(res, 'Gagal mengambil timeline pelacakan.');
+  }
+};
+
+export const checkoutOrder = checkout;
+export const getOrders = getUserOrders;
+export const getOrderDetail = getOrderById;

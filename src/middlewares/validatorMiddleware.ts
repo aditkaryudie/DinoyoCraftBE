@@ -5,6 +5,29 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { sendBadRequest } from '../utils/response.js';
+import { ZodSchema } from 'zod';
+
+/**
+ * validateZod
+ * Middleware validasi berbasis Zod Schema
+ */
+export const validateZod = (schema: ZodSchema) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      const fieldErrors: Record<string, string[]> = {};
+      for (const issue of result.error.issues) {
+        const field = issue.path.join('.') || 'body';
+        if (!fieldErrors[field]) fieldErrors[field] = [];
+        fieldErrors[field].push(issue.message);
+      }
+      sendBadRequest(res, 'Validasi data gagal. Periksa kembali input Anda.', fieldErrors);
+      return;
+    }
+    req.body = result.data;
+    next();
+  };
+};
 
 type ValidationRule = {
   field: string;

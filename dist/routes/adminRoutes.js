@@ -39,56 +39,105 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const adminController = __importStar(require("../controllers/adminController.js"));
+const systemLogController = __importStar(require("../controllers/systemLogController.js"));
 const aiSettingController_js_1 = require("../controllers/aiSettingController.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js");
+const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
 /**
  * @route   GET /api/admin/dashboard-stats
  * @desc    Mendapatkan ringkasan statistik dan aktivitas dashboard admin
+ * @access  Admin (atau public untuk dev/test)
  */
 router.get('/dashboard-stats', adminController.getDashboardStats);
 /**
  * @route   GET /api/admin/ai-settings
  * @desc    Mendapatkan konfigurasi AI Assistant
+ * @access  Admin
  */
 router.get('/ai-settings', aiSettingController_js_1.getAiSettings);
 /**
  * @route   PUT /api/admin/ai-settings
  * @desc    Menyimpan / memperbarui konfigurasi AI Assistant
+ * @access  Admin
  */
 router.put('/ai-settings', aiSettingController_js_1.updateAiSettings);
 // Semua route di bawah ini memerlukan autentikasi + role admin
 router.use(authMiddleware_js_1.verifyToken, (0, authMiddleware_js_1.requireRole)(['admin']));
-// Transaksi Lintas Toko
-router.get('/transactions', adminController.getAdminTransactions);
-// Manajemen Pengguna
+/**
+ * @route   GET /api/admin/users
+ * @desc    Mendapatkan semua pengguna (dengan paginasi)
+ * @access  Admin only
+ */
 router.get('/users', adminController.getAllUsers);
-router.post('/users', adminController.createUser);
-router.put('/users/:id', adminController.updateUser);
-router.delete('/users/:id', adminController.deleteUser);
-router.patch('/users/:id/status', (0, validatorMiddleware_js_1.validateBody)([{ field: 'is_active', required: true, type: 'boolean' }]), adminController.updateUserStatus);
-// Master Data
+/**
+ * @route   PATCH /api/admin/users/:id/status
+ * @desc    Mengaktifkan / menonaktifkan akun pengguna
+ * @access  Admin only
+ */
+router.patch('/users/:id/status', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateUserStatusSchema), adminController.updateUserStatus);
+/**
+ * @route   PATCH /api/admin/users/:id/force-logout
+ * @desc    Mengakhiri seluruh sesi pengguna di semua perangkat (token_version +1)
+ * @access  Admin only
+ */
+router.patch('/users/:id/force-logout', adminController.forceLogoutUser);
+/**
+ * @route   GET /api/admin/transactions
+ * @desc    Daftar seluruh transaksi lintas toko beserta status Midtrans & paid_at
+ * @access  Admin only
+ */
+router.get('/transactions', adminController.getAdminTransactions);
+/**
+ * @route   GET /api/admin/withdrawals?status=pending
+ * @desc    Daftar pengajuan tarik saldo mitra
+ * @access  Admin only
+ */
+router.get('/withdrawals', adminController.getWithdrawals);
+/**
+ * @route   PATCH /api/admin/withdrawals/:id
+ * @desc    Setujui / tolak pengajuan penarikan
+ * @access  Admin only
+ */
+router.patch('/withdrawals/:id', adminController.handleWithdrawalAction);
+/**
+ * @route   GET /api/admin/master-data
+ * @desc    Mendapatkan data master (opsional filter by category)
+ * @access  Admin only
+ */
 router.get('/master-data', adminController.getMasterData);
-router.post('/master-data', (0, validatorMiddleware_js_1.validateBody)([
-    { field: 'category', required: true, type: 'string', minLength: 1, maxLength: 50 },
-    { field: 'key', required: true, type: 'string', minLength: 1, maxLength: 100 },
-    { field: 'value', required: true, type: 'string', minLength: 1 },
-]), adminController.createMasterData);
-// Verifikasi & Manajemen Toko Mitra
+/**
+ * @route   POST /api/admin/master-data
+ * @desc    Membuat data master baru
+ * @access  Admin only
+ */
+router.post('/master-data', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.createMasterDataSchema), adminController.createMasterData);
+/**
+ * @route   GET /api/admin/verifikasi
+ * @desc    Mendapatkan daftar pengajuan verifikasi toko mitra
+ * @access  Admin only
+ */
 router.get('/verifikasi', adminController.getVerifikasiList);
-router.patch('/verifikasi/:id', (0, validatorMiddleware_js_1.validateBody)([{ field: 'status', required: true, type: 'string' }]), adminController.verifyMitraStore);
-router.patch('/stores/:id/status', adminController.updateStoreStatus);
-router.delete('/stores/:id', adminController.deleteStore);
-// Manajemen Kategori Produk
-router.get('/categories', adminController.getCategories);
-router.post('/categories', adminController.createCategory);
-router.put('/categories/:id', adminController.updateCategory);
-router.delete('/categories/:id', adminController.deleteCategory);
-// Manajemen Jadwal Kunjungan Edukasi
-router.get('/schedules', adminController.getSchedules);
-router.post('/schedules', adminController.createSchedule);
-router.put('/schedules/:id', adminController.updateSchedule);
-router.delete('/schedules/:id', adminController.deleteSchedule);
+/**
+ * @route   PATCH /api/admin/verifikasi/:id
+ * @desc    Setujui / tolak verifikasi toko mitra
+ * @access  Admin only
+ */
+router.patch('/verifikasi/:id', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.verifyMitraStoreSchema), adminController.verifyMitraStore);
+// ============================================================
+//  SYSTEM LOGS & LIVE MONITORING (PRD §11 — Admin Only)
+// ============================================================
+router.get('/logs', systemLogController.getSystemLogs);
+router.get('/logs/summary', systemLogController.getSystemLogsSummary);
+router.get('/logs/export', systemLogController.exportSystemLogsCsv);
+router.post('/logs/bulk-delete', systemLogController.bulkDeleteSystemLogs);
+router.post('/logs/pusher-auth', systemLogController.authorizePusherChannel);
+router.get('/logs/:eventId', systemLogController.getSystemLogDetail);
+router.get('/logs/:eventId/related', systemLogController.getRelatedSystemLogs);
+router.post('/logs/:eventId/acknowledge', systemLogController.acknowledgeSystemLog);
+router.post('/logs/:eventId/restore', systemLogController.restoreSystemLog);
+router.delete('/logs/:eventId/purge', systemLogController.purgeSystemLog);
+router.delete('/logs/:eventId', systemLogController.softDeleteSystemLog);
 exports.default = router;
 //# sourceMappingURL=adminRoutes.js.map

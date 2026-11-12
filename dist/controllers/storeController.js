@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getStoreProfile = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
+const productController_js_1 = require("./productController.js");
 const getStoreProfile = async (req, res) => {
     try {
         const userId = req.user?.id || req.user?.userId || res.locals['userId'];
@@ -19,8 +20,12 @@ const getStoreProfile = async (req, res) => {
         m.store_name,
         m.workshop_address,
         m.description,
-        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
-        m.banner_url,
+        CASE 
+          WHEN m.avatar_url IS NOT NULL AND m.avatar_url != '' AND m.avatar_url NOT LIKE '%googleusercontent.com%' AND m.avatar_url NOT LIKE '%google.com%' THEN m.avatar_url
+          WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+          ELSE NULL 
+        END AS avatar_url,
+        COALESCE(NULLIF(m.banner_url, ''), 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?q=80&w=1200&auto=format&fit=crop') AS banner_url,
         u.name AS owner_name
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id
@@ -44,40 +49,46 @@ const getStoreProfile = async (req, res) => {
         const [productRows] = await database_js_1.default.query(`SELECT 
         id,
         name,
+        description,
         price,
+        stock,
+        weight_gram,
+        variants,
         image_urls,
+        rating,
+        total_reviews,
         created_at
       FROM products
       WHERE mitra_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
       ORDER BY created_at DESC`, [store.id]);
         const products = productRows.map((p) => {
-            let imageUrl = null;
-            if (p.image_urls) {
-                try {
-                    const parsed = typeof p.image_urls === 'string' ? JSON.parse(p.image_urls) : p.image_urls;
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                        imageUrl = parsed[0];
-                    }
-                    else if (typeof parsed === 'string') {
-                        imageUrl = parsed;
-                    }
-                }
-                catch {
-                    imageUrl = String(p.image_urls);
-                }
-            }
+            const imageUrls = (0, productController_js_1.parseImageUrls)(p.image_urls);
+            let imageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
             if (imageUrl && !imageUrl.startsWith('http')) {
                 imageUrl = `http://localhost:5000${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
             }
+            const totalReviews = Number(p.total_reviews) || 0;
+            const rating = totalReviews > 0 ? Number(p.rating) || 0 : 0;
             return {
                 id: p.id,
                 name: p.name,
+                description: p.description || '',
                 price: Number(p.price),
-                imageUrl: imageUrl,
-                isHot: true,
-                rating: 4.9,
+                stock: Number(p.stock),
+                weight_gram: Number(p.weight_gram) || 500,
+                variants: (0, productController_js_1.parseVariants)(p.variants),
+                imageUrl,
+                isHot: false,
+                rating,
+                total_reviews: totalReviews,
             };
         });
+        const [revStats] = await database_js_1.default.query(`SELECT COALESCE(ROUND(AVG(r.rating), 1), 0) AS avg_rating, COUNT(*) AS total_reviews
+       FROM reviews r
+       JOIN products p ON r.product_id = p.id
+       WHERE p.mitra_id = ?`, [store.id]);
+        const storeTotalReviews = Number(revStats?.[0]?.total_reviews) || 0;
+        const storeRating = storeTotalReviews > 0 ? Number(revStats?.[0]?.avg_rating) || 0 : 0;
         res.status(200).json({
             success: true,
             data: {
@@ -87,8 +98,8 @@ const getStoreProfile = async (req, res) => {
                     description: store.description || 'Belum ada deskripsi toko.',
                     avatarUrl: avatarUrl,
                     bannerUrl: bannerUrl,
-                    rating: 4.9,
-                    reviewCount: 128,
+                    rating: storeRating,
+                    reviewCount: storeTotalReviews,
                 },
                 products: products,
             },

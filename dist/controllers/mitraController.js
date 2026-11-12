@@ -3,50 +3,43 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPublicMitraDetail = exports.getPublicMitraStores = exports.updateProduct = exports.replyOrderReview = exports.updateOrderShipping = exports.getOrders = exports.withdrawWallet = exports.getFinanceReport = exports.getDashboardMitra = void 0;
+exports.requestMitraWithdrawal = exports.getMitraWallet = exports.getPublicMitraDetail = exports.getPublicMitraStores = exports.updateProduct = exports.getOrders = exports.getFinanceReport = exports.getDashboardMitra = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
-const notificationService_js_1 = require("../services/notificationService.js");
-const parseNumericOrderId = (rawId) => {
-    if (typeof rawId === 'number')
-        return rawId;
-    const str = String(rawId).trim();
-    if (/^\d+$/.test(str))
-        return parseInt(str, 10);
-    // Format ORD-YYYYMMDD-0015 -> ambil bagian terakhir setelah '-'
-    const parts = str.split('-');
-    const lastPart = parts[parts.length - 1];
-    const parsed = parseInt(lastPart, 10);
-    return isNaN(parsed) ? 0 : parsed;
-};
+const walletService_js_1 = require("../services/walletService.js");
+const productController_js_1 = require("./productController.js");
 const getDashboardMitra = async (req, res) => {
     try {
+        // 1. Ambil ID user dari JWT (res.locals atau req.user)
         const userId = req.user?.id || req.user?.userId || res.locals['userId'];
         if (!userId) {
             res.status(401).json({ success: false, message: 'Autentikasi gagal. User tidak ditemukan.' });
             return;
         }
+        // 2. Cari profil mitra berdasarkan user_id
         const [mitraRows] = await database_js_1.default.query('SELECT id, user_id, store_name FROM mitra_profiles WHERE user_id = ? LIMIT 1', [userId]);
         const [userRows] = await database_js_1.default.query('SELECT id, name FROM users WHERE id = ? LIMIT 1', [userId]);
         const userName = userRows && userRows.length > 0 ? userRows[0].name : 'Mitra';
         const mitra = mitraRows && mitraRows.length > 0 ? mitraRows[0] : null;
         const mitraId = mitra ? mitra.id : null;
         const storeName = mitra?.store_name || userName;
+        // 3. Hitung Produk Aktif dari tabel products
         let totalProducts = 0;
         if (mitraId) {
             const [productCountRows] = await database_js_1.default.query('SELECT COUNT(*) AS total FROM products WHERE mitra_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)', [mitraId]);
             totalProducts = Number(productCountRows[0]?.total || 0);
         }
+        // 4. Hitung Pesanan dan Saldo dari tabel orders
         let totalOrders = 0;
         let activeBalance = 0;
         let recentOrdersFormatted = [];
         if (mitraId) {
+            // Hitung total pesanan
             const [orderCountRows] = await database_js_1.default.query('SELECT COUNT(*) AS total FROM orders WHERE mitra_id = ?', [mitraId]);
             totalOrders = Number(orderCountRows[0]?.total || 0);
-            const [balanceRows] = await database_js_1.default.query("SELECT COALESCE(SUM(total_amount), 0) AS balance FROM orders WHERE mitra_id = ? AND (status IS NULL OR status != 'cancelled')", [mitraId]);
-            const grossBalance = Number(balanceRows[0]?.balance || 0);
-            const [withdrawRows] = await database_js_1.default.query("SELECT COALESCE(SUM(amount), 0) AS withdrawn FROM transactions WHERE (mitra_id = ? OR user_id = ?) AND transaction_type = 'withdrawal' AND status IN ('pending', 'success')", [mitraId, userId]);
-            const totalWithdrawn = Number(withdrawRows[0]?.withdrawn || 0);
-            activeBalance = Math.max(0, grossBalance - totalWithdrawn);
+            // Hitung Saldo Aktif dari wallet ledger (hanya pesanan selesai dikurangi penarikan)
+            const wallet = await (0, walletService_js_1.getWalletSummary)(mitraId);
+            activeBalance = wallet.saldo_tersedia;
+            // Query pesanan terbaru
             const [orderRows] = await database_js_1.default.query(`SELECT 
           o.id,
           o.created_at,
@@ -71,13 +64,13 @@ const getDashboardMitra = async (req, res) => {
                 const dateStr = orderDate.toISOString().split('T')[0].replace(/-/g, '');
                 return {
                     id: `ORD-${dateStr}-00${item.id}`,
-                    rawId: item.id,
                     items: Number(item.total_items || 1),
                     customer: item.customer_name,
                     status: statusMap[item.status] || item.status || 'Perlu Diproses'
                 };
             });
         }
+        // 5. Susun respons JSON yang siap di-consume frontend
         res.status(200).json({
             success: true,
             data: {
@@ -113,84 +106,59 @@ const getFinanceReport = async (req, res) => {
             return;
         }
         const mitraId = mitra.id;
+        // Ambil order untuk kalkulasi saldo
         const [orders] = await database_js_1.default.query('SELECT id, total_amount, status, created_at FROM orders WHERE mitra_id = ?', [mitraId]);
-        let grossSaldo = 0;
+        let saldoAktif = 0;
         let pendapatanTertunda = 0;
         orders.forEach((order) => {
             const total = Number(order.total_amount || 0);
             const status = (order.status || '').toLowerCase();
-            if (['completed', 'delivered', 'selesai', 'paid', 'shipped', 'packed'].includes(status)) {
-                grossSaldo += total;
+            if (status === 'completed' || status === 'delivered' || status === 'selesai') {
+                saldoAktif += total;
             }
-            else if (['pending', 'processing'].includes(status)) {
+            else if (['pending', 'paid', 'packed', 'shipped', 'processing'].includes(status)) {
                 pendapatanTertunda += total;
             }
         });
-        const [withdrawRows] = await database_js_1.default.query("SELECT id, amount, status, reference_code, notes, created_at FROM transactions WHERE (mitra_id = ? OR user_id = ?) AND transaction_type = 'withdrawal' ORDER BY created_at DESC", [mitraId, userId]);
-        let totalDitarik = 0;
-        for (const wd of withdrawRows || []) {
-            if (wd.status === 'success' || wd.status === 'pending') {
-                totalDitarik += Number(wd.amount || 0);
-            }
-        }
-        const saldoAktif = Math.max(0, grossSaldo - totalDitarik);
+        // Ambil riwayat pesanan/transaksi terbaru untuk mitra ini
         const [recentOrderRows] = await database_js_1.default.query(`SELECT id, created_at, total_amount, status 
        FROM orders 
        WHERE mitra_id = ? 
        ORDER BY created_at DESC 
        LIMIT 10`, [mitraId]);
-        const orderHistory = recentOrderRows.map((o) => {
+        let riwayatTransaksi = recentOrderRows.map((o) => {
             const d = o.created_at ? new Date(o.created_at) : new Date();
             const tanggal = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
             const statusStr = (o.status || '').toLowerCase();
-            const statusLabel = ['completed', 'selesai', 'delivered', 'paid', 'shipped'].includes(statusStr)
+            const statusLabel = (statusStr === 'completed' || statusStr === 'selesai' || statusStr === 'delivered')
                 ? 'Selesai'
-                : statusStr === 'cancelled'
-                    ? 'Dibatalkan'
-                    : 'Tertunda';
+                : (statusStr === 'cancelled' ? 'Dibatalkan' : 'Tertunda');
             return {
                 id: `TRX-${String(o.id).padStart(3, '0')}`,
                 tanggal,
                 deskripsi: `Penjualan - INV/${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/00${o.id}`,
                 status: statusLabel,
-                nominal: Number(o.total_amount || 0),
-                timestamp: d.getTime()
+                nominal: Number(o.total_amount || 0)
             };
         });
-        const withdrawHistory = (withdrawRows || []).map((wd) => {
-            const d = wd.created_at ? new Date(wd.created_at) : new Date();
-            const tanggal = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-            let bankLabel = 'Rekening Bank';
-            try {
-                const parsed = typeof wd.notes === 'string' ? JSON.parse(wd.notes) : wd.notes;
-                if (parsed && parsed.bank_name) {
-                    bankLabel = `${parsed.bank_name} (${parsed.account_number || ''})`;
-                }
-            }
-            catch {
-                if (wd.notes)
-                    bankLabel = String(wd.notes);
-            }
-            return {
-                id: wd.reference_code || `WD-${String(wd.id).padStart(3, '0')}`,
-                tanggal,
-                deskripsi: `Penarikan Dana ke ${bankLabel}`,
-                status: wd.status === 'failed' || wd.status === 'cancelled' ? 'Dibatalkan' : 'Selesai',
-                nominal: -Math.abs(Number(wd.amount || 0)),
-                timestamp: d.getTime()
-            };
-        });
-        const riwayatTransaksi = [...withdrawHistory, ...orderHistory]
-            .sort((a, b) => b.timestamp - a.timestamp)
-            .slice(0, 15)
-            .map(({ timestamp, ...rest }) => rest);
+        // Saldo & penarikan dari wallet ledger (konsisten dengan /mitra/wallet)
+        const wallet = await (0, walletService_js_1.getWalletSummary)(mitraId);
+        const withdrawals = await (0, walletService_js_1.listWithdrawals)(mitraId, 10);
+        const chartData = await (0, walletService_js_1.getWeeklyChart)(mitraId);
+        const chartBulanan = await (0, walletService_js_1.getMonthlyChart)(mitraId);
         res.json({
             success: true,
             data: {
-                saldoAktif,
-                pendapatanTertunda,
-                totalDitarik,
-                riwayatTransaksi
+                saldoAktif: wallet.saldo_tersedia,
+                pendapatanTertunda: wallet.pendapatan_tertunda,
+                totalDitarik: wallet.total_ditarik,
+                minWithdrawal: wallet.min_withdrawal,
+                withdrawalFee: wallet.withdrawal_fee,
+                riwayatPenarikan: withdrawals,
+                riwayatTransaksi,
+                chartData,
+                chartMingguan: chartData,
+                chartBulanan: chartBulanan,
             }
         });
     }
@@ -200,43 +168,6 @@ const getFinanceReport = async (req, res) => {
     }
 };
 exports.getFinanceReport = getFinanceReport;
-const withdrawWallet = async (req, res) => {
-    try {
-        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
-        if (!userId) {
-            res.status(401).json({ success: false, message: 'Unauthorized' });
-            return;
-        }
-        const { amount, bank_name = 'BCA', account_number = '-', account_holder = 'Mitra' } = req.body;
-        const withdrawAmount = Number(amount || 0);
-        if (!withdrawAmount || withdrawAmount < 50000) {
-            res.status(400).json({ success: false, message: 'Minimal penarikan dana adalah Rp 50.000' });
-            return;
-        }
-        const [mitraRows] = await database_js_1.default.query('SELECT id FROM mitra_profiles WHERE user_id = ? LIMIT 1', [userId]);
-        const mitraId = mitraRows?.[0]?.id || null;
-        const refCode = `WD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const notesJson = JSON.stringify({ bank_name, account_number, account_holder });
-        await database_js_1.default.query(`INSERT INTO transactions (user_id, mitra_id, transaction_type, amount, status, reference_code, notes, created_at, updated_at)
-       VALUES (?, ?, 'withdrawal', ?, 'success', ?, ?, NOW(), NOW())`, [userId, mitraId, withdrawAmount, refCode, notesJson]);
-        res.status(200).json({
-            success: true,
-            message: 'Permintaan penarikan dana berhasil diproses!',
-            data: {
-                reference_code: refCode,
-                amount: withdrawAmount,
-                bank_name,
-                account_number,
-                status: 'success'
-            }
-        });
-    }
-    catch (error) {
-        console.error('Error withdrawWallet:', error);
-        res.status(500).json({ success: false, message: 'Gagal memproses penarikan dana' });
-    }
-};
-exports.withdrawWallet = withdrawWallet;
 // --- 2. ENDPOINT MANAJEMEN PESANAN ---
 const getOrders = async (req, res) => {
     try {
@@ -252,6 +183,7 @@ const getOrders = async (req, res) => {
             return;
         }
         const mitraId = mitra.id;
+        // Cari pesanan milik mitra ini beserta info pembayaran Midtrans
         const [orderRows] = await database_js_1.default.query(`SELECT 
         o.id,
         o.created_at,
@@ -259,11 +191,17 @@ const getOrders = async (req, res) => {
         o.total_amount,
         o.shipping_method,
         o.tracking_number,
-        o.shipping_address,
-        o.notes,
-        COALESCE(u.name, 'Customer') AS customer_name
+        COALESCE(u.name, 'Customer') AS customer_name,
+        t.transaction_type AS payment_method,
+        t.payment_type,
+        t.bank,
+        t.gateway,
+        t.status AS payment_status,
+        t.paid_at,
+        t.expiry_time
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.id
+      LEFT JOIN transactions t ON o.transaction_id = t.id
       WHERE o.mitra_id = ?
       ORDER BY o.created_at DESC`, [mitraId]);
         if (orderRows.length === 0) {
@@ -272,71 +210,68 @@ const getOrders = async (req, res) => {
         }
         const orderIds = orderRows.map((o) => o.id);
         const placeholders = orderIds.map(() => '?').join(',');
-        // Gunakan oi.price_at_purchase sesuai skema tabel order_items
+        // Ambil order items untuk pesanan-pesanan ini
         const [itemRows] = await database_js_1.default.query(`SELECT 
         oi.order_id,
         oi.quantity,
-        oi.price_at_purchase,
-        oi.variant,
+        oi.unit_price,
         p.name AS product_name,
         p.image_urls
       FROM order_items oi
-      LEFT JOIN products p ON oi.product_id = p.id
+      JOIN products p ON oi.product_id = p.id
       WHERE oi.order_id IN (${placeholders})`, orderIds);
-        // Ambil ulasan untuk pesanan-pesanan ini
-        const [reviewRows] = await database_js_1.default
-            .query(`SELECT order_id, rating, comment, seller_reply
-         FROM reviews
-         WHERE order_id IN (${placeholders})`, orderIds)
-            .catch(() => [[]]);
-        const reviewsByOrder = {};
-        for (const rev of reviewRows || []) {
-            if (rev.order_id) {
-                reviewsByOrder[rev.order_id] = {
-                    rating: Number(rev.rating || 5),
-                    comment: rev.comment || '',
-                    reply: rev.seller_reply || undefined
-                };
-            }
-        }
+        // Group items by order_id
         const itemsByOrder = {};
         for (const item of itemRows) {
             if (!itemsByOrder[item.order_id]) {
                 itemsByOrder[item.order_id] = [];
             }
+            let firstImage;
+            if (Array.isArray(item.image_urls) && item.image_urls.length > 0) {
+                firstImage = String(item.image_urls[0]);
+            }
+            else if (typeof item.image_urls === 'string' && item.image_urls.trim()) {
+                try {
+                    const parsed = JSON.parse(item.image_urls);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        firstImage = String(parsed[0]);
+                    }
+                    else {
+                        firstImage = item.image_urls.trim();
+                    }
+                }
+                catch {
+                    firstImage = item.image_urls.trim();
+                }
+            }
             itemsByOrder[item.order_id].push({
-                productName: item.product_name || 'Produk Keramik',
-                quantity: Number(item.quantity || 1),
-                price: Number(item.price_at_purchase || 0),
-                variant: item.variant || undefined
+                productName: item.product_name,
+                quantity: item.quantity,
+                price: Number(item.unit_price),
+                image: firstImage,
             });
         }
-        const statusToUiMap = {
-            pending: 'Perlu Dikirim',
-            paid: 'Perlu Dikirim',
-            packed: 'Perlu Dikirim',
-            shipped: 'Dikirim',
-            completed: 'Selesai',
-            cancelled: 'Dibatalkan'
-        };
+        // Format respons
         const formattedOrders = orderRows.map((order) => {
             const orderDate = order.created_at ? new Date(order.created_at) : new Date();
             const dateStr = orderDate.toISOString().split('T')[0].replace(/-/g, '');
-            const rawStatus = String(order.status || 'pending').toLowerCase();
             return {
                 id: order.id,
-                rawId: order.id,
                 orderId: `ORD-${dateStr}-00${order.id}`,
                 tanggal: order.created_at,
                 customerName: order.customer_name || 'Customer',
-                status: statusToUiMap[rawStatus] || order.status || 'Perlu Dikirim',
-                dbStatus: rawStatus,
+                status: order.status,
                 totalBelanja: Number(order.total_amount || 0),
                 kurir: order.shipping_method || undefined,
                 resi: order.tracking_number || undefined,
-                shippingAddress: order.shipping_address || undefined,
-                items: itemsByOrder[order.id] || [],
-                review: reviewsByOrder[order.id] || undefined
+                payment_method: order.payment_method || null,
+                payment_type: order.payment_type || null,
+                bank: order.bank || null,
+                gateway: order.gateway || 'midtrans',
+                payment_status: order.payment_status || 'pending',
+                paid_at: order.paid_at || null,
+                expiry_time: order.expiry_time || null,
+                items: itemsByOrder[order.id] || []
             };
         });
         res.json({ success: true, data: formattedOrders });
@@ -347,97 +282,11 @@ const getOrders = async (req, res) => {
     }
 };
 exports.getOrders = getOrders;
-const updateOrderShipping = async (req, res) => {
-    try {
-        const rawParamId = String(req.params.id || '');
-        const orderId = parseNumericOrderId(rawParamId);
-        const { kurir, courier, resi, tracking_number, status = 'shipped' } = req.body;
-        const resolvedKurir = kurir || courier;
-        const resolvedResi = resi || tracking_number;
-        if (!orderId) {
-            res.status(400).json({ success: false, message: 'ID pesanan tidak valid' });
-            return;
-        }
-        const [orders] = await database_js_1.default.query('SELECT * FROM orders WHERE id = ? LIMIT 1', [orderId]);
-        if (!orders || orders.length === 0) {
-            res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
-            return;
-        }
-        const order = orders[0];
-        await database_js_1.default.query(`UPDATE orders
-       SET status = ?,
-           shipping_method = COALESCE(?, shipping_method),
-           tracking_number = COALESCE(?, tracking_number),
-           updated_at = NOW()
-       WHERE id = ?`, [status, resolvedKurir ?? null, resolvedResi ?? null, orderId]);
-        // Simpan notifikasi ke pembeli & kirim push notification FCM
-        await database_js_1.default
-            .query(`INSERT INTO notifications (user_id, title, body, type, reference_id, is_read, created_at)
-         VALUES (?, ?, ?, 'order', ?, 0, NOW())`, [
-            order.user_id,
-            'Pesanan Sedang Dikirim! 🚚',
-            `Pesanan #${orderId} telah dikirim melalui ${resolvedKurir || 'ekspedisi'}${resolvedResi ? ` dengan No. Resi: ${resolvedResi}` : ''}.`,
-            String(orderId)
-        ])
-            .catch(() => { });
-        (0, notificationService_js_1.sendPushNotificationToUser)(order.user_id, 'Pesanan Sedang Dikirim! 🚚', `Pesanan #${orderId} dikirim via ${resolvedKurir || 'ekspedisi'}${resolvedResi ? ` (Resi: ${resolvedResi})` : ''}.`, { type: 'order', order_id: String(orderId), status: 'shipped', tracking_number: String(resolvedResi || '') }).catch(() => { });
-        res.status(200).json({
-            success: true,
-            message: 'Nomor resi berhasil disimpan & status pesanan diubah menjadi Dikirim!',
-            data: {
-                orderId: rawParamId,
-                rawId: orderId,
-                status: 'Dikirim',
-                dbStatus: status,
-                kurir: resolvedKurir,
-                resi: resolvedResi
-            }
-        });
-    }
-    catch (error) {
-        console.error('Error updateOrderShipping:', error);
-        res.status(500).json({ success: false, message: 'Gagal memperbarui pengiriman pesanan' });
-    }
-};
-exports.updateOrderShipping = updateOrderShipping;
-const replyOrderReview = async (req, res) => {
-    try {
-        const rawParamId = String(req.params.id || '');
-        const orderId = parseNumericOrderId(rawParamId);
-        const { reply } = req.body;
-        if (!orderId || !reply) {
-            res.status(400).json({ success: false, message: 'ID pesanan dan isi balasan wajib diisi' });
-            return;
-        }
-        const [existingReviews] = await database_js_1.default.query('SELECT id FROM reviews WHERE order_id = ? LIMIT 1', [orderId]);
-        if (existingReviews && existingReviews.length > 0) {
-            await database_js_1.default.query('UPDATE reviews SET seller_reply = ?, updated_at = NOW() WHERE order_id = ?', [reply, orderId]);
-        }
-        else {
-            const [orderRows] = await database_js_1.default.query('SELECT user_id FROM orders WHERE id = ? LIMIT 1', [orderId]);
-            const [itemRows] = await database_js_1.default.query('SELECT product_id FROM order_items WHERE order_id = ? LIMIT 1', [orderId]);
-            if (orderRows?.length > 0 && itemRows?.length > 0) {
-                await database_js_1.default.query(`INSERT INTO reviews (product_id, user_id, order_id, rating, comment, seller_reply, created_at, updated_at)
-           VALUES (?, ?, ?, 5, 'Produk berkualitas sangat baik.', ?, NOW(), NOW())`, [itemRows[0].product_id, orderRows[0].user_id, orderId, reply]);
-            }
-        }
-        res.status(200).json({
-            success: true,
-            message: 'Balasan ulasan berhasil dikirim!',
-            data: { orderId: rawParamId, rawId: orderId, reply }
-        });
-    }
-    catch (error) {
-        console.error('Error replyOrderReview:', error);
-        res.status(500).json({ success: false, message: 'Gagal menyimpan balasan ulasan' });
-    }
-};
-exports.replyOrderReview = replyOrderReview;
 // --- 3. ENDPOINT EDIT PRODUK (FIX KATALOG BUG) ---
 const updateProduct = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { name, title, price, stock, category_id, description, image_url } = req.body;
+        const { id } = req.params; // ID produk dari URL
+        const { name, title, price, stock, category_id, description, variants, weight_gram } = req.body;
         const userId = req.user?.id || req.user?.userId || res.locals['userId'];
         if (!userId) {
             res.status(401).json({ success: false, message: 'Autentikasi gagal. User tidak ditemukan.' });
@@ -450,16 +299,38 @@ const updateProduct = async (req, res) => {
             return;
         }
         const mitraId = mitra.id;
+        // Pastikan produk yang diedit benar-benar milik mitra yang sedang login
         const [prodRows] = await database_js_1.default.query('SELECT * FROM products WHERE id = ? AND mitra_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) LIMIT 1', [id, mitraId]);
         if (!prodRows || prodRows.length === 0) {
             res.status(404).json({ success: false, message: 'Produk tidak ditemukan atau Anda tidak memiliki akses' });
             return;
         }
         const existingProduct = prodRows[0];
-        const updatedName = name !== undefined ? name : title !== undefined ? title : existingProduct.name;
+        // Dapatkan data update (dukung 'name' atau 'title')
+        const updatedName = name !== undefined ? name : (title !== undefined ? title : existingProduct.name);
         const updatedPrice = price !== undefined ? parseFloat(price) : existingProduct.price;
-        const updatedStock = stock !== undefined ? parseInt(stock) : existingProduct.stock;
         const updatedDesc = description !== undefined ? description : existingProduct.description;
+        const updatedWeight = weight_gram !== undefined
+            ? Math.max(1, parseInt(weight_gram, 10) || 500)
+            : (Number(existingProduct.weight_gram) || 500);
+        let updatedVariantsJson;
+        let updatedStock;
+        if (variants !== undefined) {
+            const normalized = (0, productController_js_1.serializeVariantsInput)(variants);
+            if (normalized && normalized.length > 0) {
+                updatedVariantsJson = JSON.stringify(normalized);
+                updatedStock = normalized.reduce((sum, v) => sum + v.stock, 0);
+            }
+            else {
+                updatedVariantsJson = null;
+                updatedStock = stock !== undefined ? Math.max(0, parseInt(stock, 10) || 0) : Number(existingProduct.stock) || 0;
+            }
+        }
+        else {
+            const existingNormalized = (0, productController_js_1.serializeVariantsInput)(existingProduct.variants);
+            updatedVariantsJson = existingNormalized ? JSON.stringify(existingNormalized) : null;
+            updatedStock = stock !== undefined ? Math.max(0, parseInt(stock, 10) || 0) : Number(existingProduct.stock) || 0;
+        }
         let updatedCategoryId = existingProduct.category_id;
         if (category_id !== undefined) {
             const parsedCat = parseInt(category_id);
@@ -473,21 +344,19 @@ const updateProduct = async (req, res) => {
                 }
             }
         }
-        let updatedImageUrls = existingProduct.image_urls;
-        if (req.file) {
-            updatedImageUrls = JSON.stringify([`/uploads/${req.file.filename}`]);
-        }
-        else if (image_url && typeof image_url === 'string' && image_url.trim()) {
-            updatedImageUrls = JSON.stringify([image_url.trim()]);
-        }
+        // Lakukan update ke database
         await database_js_1.default.query(`UPDATE products 
-       SET name = ?, description = ?, price = ?, stock = ?, category_id = ?, image_urls = ?, updated_at = NOW() 
-       WHERE id = ? AND mitra_id = ?`, [updatedName, updatedDesc, updatedPrice, updatedStock, updatedCategoryId, updatedImageUrls, id, mitraId]);
+       SET name = ?, description = ?, price = ?, stock = ?, weight_gram = ?, variants = ?, category_id = ?, updated_at = NOW() 
+       WHERE id = ? AND mitra_id = ?`, [updatedName, updatedDesc, updatedPrice, updatedStock, updatedWeight, updatedVariantsJson, updatedCategoryId, id, mitraId]);
         const [updatedRows] = await database_js_1.default.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
+        const saved = updatedRows && updatedRows.length > 0 ? updatedRows[0] : existingProduct;
         res.json({
             success: true,
             message: 'Produk berhasil diperbarui!',
-            data: updatedRows && updatedRows.length > 0 ? updatedRows[0] : existingProduct
+            data: {
+                ...saved,
+                variants: (0, productController_js_1.parseVariants)(saved.variants),
+            }
         });
     }
     catch (error) {
@@ -512,10 +381,20 @@ const getPublicMitraStores = async (req, res) => {
         m.description,
         m.website,
         m.instagram,
-        m.banner_url,
-        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
-        COALESCE(m.avatar_url, u.avatar_url) AS image,
-        (SELECT COUNT(*) FROM products p WHERE p.mitra_id = m.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products
+        COALESCE(NULLIF(m.banner_url, ''), 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?q=80&w=1200&auto=format&fit=crop') AS banner_url,
+        CASE 
+          WHEN m.avatar_url IS NOT NULL AND m.avatar_url != '' AND m.avatar_url NOT LIKE '%googleusercontent.com%' AND m.avatar_url NOT LIKE '%google.com%' THEN m.avatar_url
+          WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+          ELSE NULL 
+        END AS avatar_url,
+        CASE 
+          WHEN m.avatar_url IS NOT NULL AND m.avatar_url != '' AND m.avatar_url NOT LIKE '%googleusercontent.com%' AND m.avatar_url NOT LIKE '%google.com%' THEN m.avatar_url
+          WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+          ELSE NULL 
+        END AS image,
+        (SELECT COUNT(*) FROM products p WHERE p.mitra_id = m.id AND (p.is_deleted = 0 OR p.is_deleted IS NULL)) AS total_products,
+        COALESCE((SELECT ROUND(AVG(r.rating), 1) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS avg_rating,
+        COALESCE((SELECT COUNT(*) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS total_reviews
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id
       WHERE (m.is_active = 1 OR m.is_active IS NULL)
@@ -527,10 +406,15 @@ const getPublicMitraStores = async (req, res) => {
         }
         query += ' ORDER BY m.id DESC';
         const [rows] = await database_js_1.default.query(query, params);
-        const stores = rows.map((r) => ({
-            ...r,
-            rating: 4.9
-        }));
+        const stores = rows.map((r) => {
+            const totalReviews = Number(r.total_reviews) || 0;
+            const rating = totalReviews > 0 ? Number(r.avg_rating) || 0 : 0;
+            return {
+                ...r,
+                total_reviews: totalReviews,
+                rating,
+            };
+        });
         res.status(200).json({
             success: true,
             message: 'Daftar toko mitra berhasil diambil',
@@ -559,9 +443,19 @@ const getPublicMitraDetail = async (req, res) => {
         m.description,
         m.website,
         m.instagram,
-        m.banner_url,
-        COALESCE(m.avatar_url, u.avatar_url) AS avatar_url,
-        COALESCE(m.avatar_url, u.avatar_url) AS image
+        COALESCE(NULLIF(m.banner_url, ''), 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?q=80&w=1200&auto=format&fit=crop') AS banner_url,
+        CASE 
+          WHEN m.avatar_url IS NOT NULL AND m.avatar_url != '' AND m.avatar_url NOT LIKE '%googleusercontent.com%' AND m.avatar_url NOT LIKE '%google.com%' THEN m.avatar_url
+          WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+          ELSE NULL 
+        END AS avatar_url,
+        CASE 
+          WHEN m.avatar_url IS NOT NULL AND m.avatar_url != '' AND m.avatar_url NOT LIKE '%googleusercontent.com%' AND m.avatar_url NOT LIKE '%google.com%' THEN m.avatar_url
+          WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+          ELSE NULL 
+        END AS image,
+        COALESCE((SELECT ROUND(AVG(r.rating), 1) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS avg_rating,
+        COALESCE((SELECT COUNT(*) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS total_reviews
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id
       WHERE m.id = ?
@@ -570,38 +464,60 @@ const getPublicMitraDetail = async (req, res) => {
             res.status(404).json({ success: false, message: 'Toko mitra tidak ditemukan' });
             return;
         }
-        const store = { ...stores[0], rating: 4.9 };
+        const totalStoreReviews = Number(stores[0].total_reviews) || 0;
+        const store = {
+            ...stores[0],
+            total_reviews: totalStoreReviews,
+            rating: totalStoreReviews > 0 ? Number(stores[0].avg_rating) || 0 : 0,
+        };
         const [products] = await database_js_1.default.query(`SELECT 
         p.id,
         p.name,
         p.description,
         p.price,
         p.stock,
+        p.weight_gram,
+        p.variants,
         p.image_urls,
-        c.name AS category
+        p.rating,
+        p.total_reviews,
+        COALESCE(c.name, 'Keramik') AS category,
+        COALESCE(
+          (SELECT SUM(oi.quantity)
+           FROM order_items oi
+           JOIN orders o ON oi.order_id = o.id
+           WHERE oi.product_id = p.id AND o.status != 'cancelled'),
+          0
+        ) AS sold_count
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       WHERE p.mitra_id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
       ORDER BY p.created_at DESC`, [id]);
         const formattedProducts = products.map((p) => {
-            let img = '';
-            if (p.image_urls) {
-                try {
-                    const parsed = typeof p.image_urls === 'string' ? JSON.parse(p.image_urls) : p.image_urls;
-                    img = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : '';
-                }
-                catch {
-                    img = String(p.image_urls);
-                }
-            }
+            const imageUrls = (0, productController_js_1.parseImageUrls)(p.image_urls);
+            const img = imageUrls.length > 0 ? imageUrls[0] : '';
+            const totalReviews = Number(p.total_reviews) || 0;
+            const rating = totalReviews > 0 ? Number(p.rating) || 0 : 0;
             return {
                 id: String(p.id),
+                mitra_id: Number(id),
                 name: p.name,
+                title: p.name,
+                description: p.description || '',
                 price: Number(p.price),
                 stock: Number(p.stock),
+                weight_gram: Number(p.weight_gram) || 500,
+                variants: (0, productController_js_1.parseVariants)(p.variants),
                 category: p.category || 'Keramik',
+                studio: store.store_name || store.name || 'Toko Keramik',
+                store_name: store.store_name || store.name || 'Toko Keramik',
+                workshop_address: store.workshop_address,
+                rating,
+                total_reviews: totalReviews,
+                sold_count: Number(p.sold_count) || 0,
                 image: img,
-                image_url: img
+                image_url: img,
+                images: imageUrls,
             };
         });
         res.status(200).json({
@@ -609,7 +525,7 @@ const getPublicMitraDetail = async (req, res) => {
             message: 'Detail toko mitra berhasil diambil',
             data: {
                 ...store,
-                products: formattedProducts
+                products: formattedProducts,
             },
             meta: { timestamp: new Date().toISOString() }
         });
@@ -620,4 +536,76 @@ const getPublicMitraDetail = async (req, res) => {
     }
 };
 exports.getPublicMitraDetail = getPublicMitraDetail;
+// ============================================================
+// WALLET MITRA — saldo & penarikan dana
+// ============================================================
+/**
+ * GET /api/mitra/wallet
+ * Ringkasan saldo + riwayat pengajuan penarikan.
+ */
+const getMitraWallet = async (req, res) => {
+    try {
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        if (!userId) {
+            res.status(401).json({ success: false, message: 'Autentikasi gagal.' });
+            return;
+        }
+        const [mitraRows] = await database_js_1.default.query('SELECT id, user_id, store_name FROM mitra_profiles WHERE user_id = ? LIMIT 1', [userId]);
+        if (!mitraRows || mitraRows.length === 0) {
+            res.status(404).json({ success: false, message: 'Mitra tidak ditemukan' });
+            return;
+        }
+        const summary = await (0, walletService_js_1.getWalletSummary)(mitraRows[0].id);
+        const withdrawals = await (0, walletService_js_1.listWithdrawals)(mitraRows[0].id);
+        const chartData = await (0, walletService_js_1.getWeeklyChart)(mitraRows[0].id);
+        const chartBulanan = await (0, walletService_js_1.getMonthlyChart)(mitraRows[0].id);
+        res.json({
+            success: true,
+            message: 'Saldo berhasil diambil.',
+            data: {
+                store_name: mitraRows[0].store_name,
+                ...summary,
+                chartData,
+                chartMingguan: chartData,
+                chartBulanan: chartBulanan,
+                riwayat_penarikan: withdrawals,
+            },
+        });
+    }
+    catch (error) {
+        console.error('Error getMitraWallet:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengambil data saldo.' });
+    }
+};
+exports.getMitraWallet = getMitraWallet;
+/**
+ * POST /api/mitra/wallet/withdraw
+ * Body: { amount, bank_name, account_number, account_name }
+ */
+const requestMitraWithdrawal = async (req, res) => {
+    try {
+        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        if (!userId) {
+            res.status(401).json({ success: false, message: 'Autentikasi gagal.' });
+            return;
+        }
+        const { amount, bank_name, account_number, account_name } = req.body;
+        const result = await (0, walletService_js_1.requestWithdrawal)(userId, {
+            amount: Number(amount),
+            bank_name,
+            account_number,
+            account_name,
+        });
+        res.status(201).json({
+            success: true,
+            message: 'Penarikan berhasil diproses. Dana akan ditransfer ke rekening tujuan (1-2 hari kerja).',
+            data: result,
+        });
+    }
+    catch (error) {
+        console.error('Error requestMitraWithdrawal:', error);
+        res.status(error.status || 500).json({ success: false, message: error.message || 'Gagal mengajukan penarikan.' });
+    }
+};
+exports.requestMitraWithdrawal = requestMitraWithdrawal;
 //# sourceMappingURL=mitraController.js.map
