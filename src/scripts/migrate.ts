@@ -5,6 +5,10 @@ const tables = [
   `CREATE TABLE IF NOT EXISTS \`users\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
     \`name\` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`username\` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`phone\` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`birth_date\` date DEFAULT NULL,
+    \`gender\` enum('L','P') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`email\` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
     \`password_hash\` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`role\` enum('admin','mitra','pengunjung') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pengunjung',
@@ -16,7 +20,8 @@ const tables = [
     \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`),
     UNIQUE KEY \`uq_users_email\` (\`email\`),
-    UNIQUE KEY \`uq_users_google_id\` (\`google_id\`)
+    UNIQUE KEY \`uq_users_google_id\` (\`google_id\`),
+    UNIQUE KEY \`uq_users_username\` (\`username\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
   // 2. user_addresses
@@ -309,54 +314,6 @@ const tables = [
     FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE ON UPDATE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
-  // 19. user_device_tokens
-  `CREATE TABLE IF NOT EXISTS \`user_device_tokens\` (
-    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`user_id\` int UNSIGNED NOT NULL,
-    \`fcm_token\` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-    \`platform\` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'android',
-    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`),
-    UNIQUE KEY \`uq_user_device_token\` (\`user_id\`, \`fcm_token\`),
-    KEY \`idx_tokens_user\` (\`user_id\`),
-    CONSTRAINT \`fk_tokens_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
-  // 20. reviews
-  `CREATE TABLE IF NOT EXISTS \`reviews\` (
-    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`user_id\` int UNSIGNED NOT NULL,
-    \`product_id\` int UNSIGNED NOT NULL,
-    \`order_id\` int UNSIGNED DEFAULT NULL,
-    \`rating\` tinyint UNSIGNED NOT NULL DEFAULT '5',
-    \`comment\` text COLLATE utf8mb4_unicode_ci,
-    \`variant\` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-    \`photo_urls\` json DEFAULT NULL,
-    \`helpful_count\` int UNSIGNED NOT NULL DEFAULT '0',
-    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`),
-    KEY \`idx_reviews_product\` (\`product_id\`),
-    KEY \`idx_reviews_user\` (\`user_id\`),
-    CONSTRAINT \`fk_reviews_product\` FOREIGN KEY (\`product_id\`) REFERENCES \`products\` (\`id\`) ON DELETE CASCADE,
-    CONSTRAINT \`fk_reviews_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
-  // 21. notifications
-  `CREATE TABLE IF NOT EXISTS \`notifications\` (
-    \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`user_id\` int UNSIGNED NOT NULL,
-    \`title\` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-    \`body\` text COLLATE utf8mb4_unicode_ci NOT NULL,
-    \`type\` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'general',
-    \`data\` json DEFAULT NULL,
-    \`is_read\` tinyint(1) NOT NULL DEFAULT '0',
-    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`),
-    KEY \`idx_notifications_user\` (\`user_id\`),
-    CONSTRAINT \`fk_notifications_user\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
   // 22. order_status_history — timeline pelacakan pesanan
   `CREATE TABLE IF NOT EXISTS \`order_status_history\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -495,9 +452,31 @@ const runMigration = async () => {
       await db.query('ALTER TABLE `transactions` ADD UNIQUE KEY `uq_gateway_order_id` (`gateway_order_id`)');
     } catch { /* sudah ada */ }
 
-    await ensureColumn('users', 'phone', "VARCHAR(20) NULL AFTER email");
+    await ensureColumn('users', 'username', 'VARCHAR(50) NULL AFTER name');
+    await ensureColumn('users', 'phone', 'VARCHAR(20) NULL AFTER username');
     await ensureColumn('users', 'birth_date', 'DATE NULL AFTER phone');
     await ensureColumn('users', 'gender', "ENUM('L','P') NULL AFTER birth_date");
+    try {
+      await db.query('ALTER TABLE \`users\` ADD UNIQUE KEY \`uq_users_username\` (\`username\`)');
+    } catch { /* sudah ada */ }
+
+    // Notifications versi lama memakai body/data — kode memakai message/reference_id
+    await ensureColumn('notifications', 'message', 'TEXT NOT NULL AFTER title');
+    await ensureColumn('notifications', 'reference_id', 'INT UNSIGNED NULL AFTER type');
+
+    // Reviews versi lama tidak punya kolom ulasan lengkap
+    await ensureColumn('reviews', 'order_item_id', 'INT UNSIGNED NULL AFTER id');
+    await ensureColumn('reviews', 'variant', 'VARCHAR(100) NULL AFTER rating');
+    await ensureColumn('reviews', 'comment', 'TEXT NULL AFTER variant');
+    await ensureColumn('reviews', 'photo_urls', 'JSON NULL AFTER comment');
+    await ensureColumn('reviews', 'helpful_count', "INT UNSIGNED NOT NULL DEFAULT 0 AFTER photo_urls");
+    await ensureColumn('reviews', 'seller_reply', 'TEXT NULL AFTER helpful_count');
+    await ensureColumn('reviews', 'replied_at', 'DATETIME NULL AFTER seller_reply');
+
+    // Kolom lain yang pernah ditambahkan sepanjang riwayat proyek
+    await ensureColumn('products', 'is_deleted', 'TINYINT(1) DEFAULT 0 AFTER total_reviews');
+    await ensureColumn('mitra_profiles', 'avatar_url', 'VARCHAR(500) NULL AFTER banner_url');
+    await ensureColumn('mitra_profiles', 'banner_url', 'VARCHAR(500) NULL AFTER instagram');
 
     await ensureColumn('order_items', 'variant', 'VARCHAR(100) NULL AFTER product_id');
 
