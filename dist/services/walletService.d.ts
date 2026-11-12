@@ -9,6 +9,22 @@ export interface WalletSummary {
 }
 /** Ringkasan saldo mitra berdasarkan pesanan selesai & riwayat penarikan. */
 export declare function getWalletSummary(mitraId: number): Promise<WalletSummary>;
+/**
+ * Data grafik mingguan pendapatan mitra (7 hari terakhir).
+ * Hasil query diagregasi per hari dan diparsing ke tipe Number asli
+ * agar grafik frontend tidak datar akibat MySQL string casting pada SUM().
+ */
+export declare function getWeeklyChart(mitraId: number): Promise<any[]>;
+/**
+ * Data grafik bulanan pendapatan mitra (30 hari terakhir).
+ * Hasil query diagregasi per hari dan diparsing ke tipe Number asli
+ * agar grafik 30 hari di frontend tidak datar akibat MySQL string casting pada SUM().
+ */
+export declare function getMonthlyChart(mitraId: number): Promise<any[]>;
+/**
+ * Helper fleksibel untuk mengambil data grafik mitra berdasarkan rentang waktu ('7' atau '30').
+ */
+export declare function getMitraChart(mitraId: number, range?: '7' | '30' | string): Promise<any[]>;
 /** Riwayat pengajuan penarikan milik mitra. */
 export declare function listWithdrawals(mitraId: number, limit?: number): Promise<any>;
 /** Ajukan penarikan saldo. Melempar Error dengan pesan Indonesia bila tidak valid. */

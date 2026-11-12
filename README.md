@@ -300,7 +300,7 @@ Base URL: `http://localhost:5000/api`
 | `GET` | `/api/admin/verifikasi` | Bearer | Admin | Melihat daftar pendaftaran toko mitra yang pending |
 | `PATCH` | `/api/admin/verifikasi/:id` | Bearer | Admin | Menyetujui atau menolak permohonan toko mitra + alasan |
 | `GET` | `/api/admin/master-data` | Bearer | Admin | Mengambil data konfigurasi master |
-| `POST` | `/api/admin/master-data` | Bearer | Admin | Menambahkan konfigurasi data master baru |
+| `POST` | `/api/admin/master-data` | Bearer | Admin | Menambahkan konfigurasi data master baru |SUM(
 
 ### 12. Moderasi & Keamanan Admin (`/api/admin/moderation`) — *Zod Validated*
 | Method | Endpoint | Auth | Role | Deskripsi |

@@ -10,10 +10,10 @@ const encryption_js_1 = require("../utils/encryption.js");
 const notificationService_js_1 = require("../services/notificationService.js");
 // Inisialisasi Pusher Server SDK
 const pusher = new pusher_1.default({
-    appId: (process.env.PUSHER_APP_ID || '').trim(),
-    key: (process.env.PUSHER_KEY || '').trim(),
-    secret: (process.env.PUSHER_SECRET || '').trim(),
-    cluster: (process.env.PUSHER_CLUSTER || 'ap1').trim(),
+    appId: process.env.PUSHER_APP_ID,
+    key: process.env.PUSHER_APP_KEY,
+    secret: process.env.PUSHER_APP_SECRET,
+    cluster: 'mt1', // <-- Ganti dengan hasil intipan dari Flutter
     useTLS: true
 });
 /**

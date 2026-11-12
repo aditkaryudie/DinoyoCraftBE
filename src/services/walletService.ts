@@ -67,6 +67,134 @@ export async function getWalletSummary(mitraId: number): Promise<WalletSummary> 
   };
 }
 
+/**
+ * Data grafik mingguan pendapatan mitra (7 hari terakhir).
+ * Hasil query diagregasi per hari dan diparsing ke tipe Number asli
+ * agar grafik frontend tidak datar akibat MySQL string casting pada SUM().
+ */
+export async function getWeeklyChart(mitraId: number) {
+  const [rows]: any = await pool.query(
+    `SELECT 
+       DATE(created_at) AS tanggal,
+       DATE_FORMAT(created_at, '%Y-%m-%d') AS tanggal_str,
+       DAYNAME(created_at) AS hari,
+       COALESCE(SUM(total_amount), 0) AS total_amount
+     FROM orders
+     WHERE mitra_id = ? 
+       AND status != 'cancelled'
+       AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+     GROUP BY DATE(created_at), DATE_FORMAT(created_at, '%Y-%m-%d'), DAYNAME(created_at)
+     ORDER BY DATE(created_at) ASC`,
+    [mitraId]
+  );
+
+  const rawMap = new Map<string, number>();
+  for (const r of rows) {
+    const key = r.tanggal_str || (r.tanggal instanceof Date ? r.tanggal.toISOString().split('T')[0] : String(r.tanggal));
+    rawMap.set(key, Number(r.total_amount) || 0);
+  }
+
+  const DAY_LABELS_ID: Record<string, string> = {
+    Sunday: 'Min',
+    Monday: 'Sen',
+    Tuesday: 'Sel',
+    Wednesday: 'Rab',
+    Thursday: 'Kam',
+    Friday: 'Jum',
+    Saturday: 'Sab',
+  };
+
+  // Susun 7 hari berturut-turut sampai hari ini dengan data dasar
+  const chartDays = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
+    const dayNameEn = d.toLocaleDateString('en-US', { weekday: 'long' });
+    const dayNameId = DAY_LABELS_ID[dayNameEn] || dayNameEn;
+    const amount = Number(rawMap.get(dateStr) || 0);
+
+    chartDays.push({
+      tanggal: dateStr,
+      hari: dayNameId,
+      total_amount: amount,
+    });
+  }
+
+  // Pemetaan baris kueri mentah dengan konversi tipe data Number
+  const formattedChartData = chartDays.map((row: any) => ({
+    ...row,
+    total: Number(row.total_amount) || 0,
+    total_amount: Number(row.total_amount) || 0,
+  }));
+
+  return formattedChartData;
+}
+
+/**
+ * Data grafik bulanan pendapatan mitra (30 hari terakhir).
+ * Hasil query diagregasi per hari dan diparsing ke tipe Number asli
+ * agar grafik 30 hari di frontend tidak datar akibat MySQL string casting pada SUM().
+ */
+export async function getMonthlyChart(mitraId: number) {
+  const [rows]: any = await pool.query(
+    `SELECT 
+       DATE(created_at) AS tanggal,
+       DATE_FORMAT(created_at, '%Y-%m-%d') AS tanggal_str,
+       DAY(created_at) AS hari,
+       COALESCE(SUM(total_amount), 0) AS total_amount
+     FROM orders
+     WHERE mitra_id = ? 
+       AND status != 'cancelled'
+       AND created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+     GROUP BY DATE(created_at), DATE_FORMAT(created_at, '%Y-%m-%d'), DAY(created_at)
+     ORDER BY DATE(created_at) ASC`,
+    [mitraId]
+  );
+
+  const rawMap = new Map<string, number>();
+  for (const r of rows) {
+    const key = r.tanggal_str || (r.tanggal instanceof Date ? r.tanggal.toISOString().split('T')[0] : String(r.tanggal));
+    rawMap.set(key, Number(r.total_amount) || 0);
+  }
+
+  // Susun 30 hari berturut-turut sampai hari ini
+  const monthlyDays = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
+    const dayNumber = d.getDate();
+    const amount = Number(rawMap.get(dateStr) || 0);
+
+    monthlyDays.push({
+      tanggal: dateStr,
+      hari: String(dayNumber),
+      label: `${dayNumber}`,
+      total_amount: amount,
+    });
+  }
+
+  // Pemetaan baris kueri dengan konversi tipe data Number
+  const formattedMonthlyData = monthlyDays.map((row: any) => ({
+    ...row,
+    total: Number(row.total_amount) || 0,
+    total_amount: Number(row.total_amount) || 0,
+  }));
+
+  return formattedMonthlyData;
+}
+
+/**
+ * Helper fleksibel untuk mengambil data grafik mitra berdasarkan rentang waktu ('7' atau '30').
+ */
+export async function getMitraChart(mitraId: number, range: '7' | '30' | string = '7') {
+  if (range === '30' || range === '30hari') {
+    return getMonthlyChart(mitraId);
+  }
+  return getWeeklyChart(mitraId);
+}
+
 /** Riwayat pengajuan penarikan milik mitra. */
 export async function listWithdrawals(mitraId: number, limit = 20) {
   const [rows]: any = await pool.query(
@@ -78,7 +206,11 @@ export async function listWithdrawals(mitraId: number, limit = 20) {
      LIMIT ?`,
     [mitraId, limit]
   );
-  return rows;
+  return rows.map((r: any) => ({
+    ...r,
+    amount: Number(r.amount) || 0,
+    fee: Number(r.fee) || 0,
+  }));
 }
 
 /** Ajukan penarikan saldo. Melempar Error dengan pesan Indonesia bila tidak valid. */

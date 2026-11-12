@@ -144,6 +144,8 @@ const getFinanceReport = async (req, res) => {
         // Saldo & penarikan dari wallet ledger (konsisten dengan /mitra/wallet)
         const wallet = await (0, walletService_js_1.getWalletSummary)(mitraId);
         const withdrawals = await (0, walletService_js_1.listWithdrawals)(mitraId, 10);
+        const chartData = await (0, walletService_js_1.getWeeklyChart)(mitraId);
+        const chartBulanan = await (0, walletService_js_1.getMonthlyChart)(mitraId);
         res.json({
             success: true,
             data: {
@@ -153,7 +155,10 @@ const getFinanceReport = async (req, res) => {
                 minWithdrawal: wallet.min_withdrawal,
                 withdrawalFee: wallet.withdrawal_fee,
                 riwayatPenarikan: withdrawals,
-                riwayatTransaksi
+                riwayatTransaksi,
+                chartData,
+                chartMingguan: chartData,
+                chartBulanan: chartBulanan,
             }
         });
     }
@@ -552,12 +557,17 @@ const getMitraWallet = async (req, res) => {
         }
         const summary = await (0, walletService_js_1.getWalletSummary)(mitraRows[0].id);
         const withdrawals = await (0, walletService_js_1.listWithdrawals)(mitraRows[0].id);
+        const chartData = await (0, walletService_js_1.getWeeklyChart)(mitraRows[0].id);
+        const chartBulanan = await (0, walletService_js_1.getMonthlyChart)(mitraRows[0].id);
         res.json({
             success: true,
             message: 'Saldo berhasil diambil.',
             data: {
                 store_name: mitraRows[0].store_name,
                 ...summary,
+                chartData,
+                chartMingguan: chartData,
+                chartBulanan: chartBulanan,
                 riwayat_penarikan: withdrawals,
             },
         });

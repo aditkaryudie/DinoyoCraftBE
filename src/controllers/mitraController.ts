@@ -4,6 +4,8 @@ import {
   getWalletSummary,
   listWithdrawals,
   requestWithdrawal,
+  getWeeklyChart,
+  getMonthlyChart,
 } from '../services/walletService.js';
 import {
   parseImageUrls,
@@ -190,6 +192,8 @@ export const getFinanceReport = async (req: Request, res: Response): Promise<voi
     // Saldo & penarikan dari wallet ledger (konsisten dengan /mitra/wallet)
     const wallet = await getWalletSummary(mitraId);
     const withdrawals = await listWithdrawals(mitraId, 10);
+    const chartData = await getWeeklyChart(mitraId);
+    const chartBulanan = await getMonthlyChart(mitraId);
 
     res.json({
       success: true,
@@ -200,7 +204,10 @@ export const getFinanceReport = async (req: Request, res: Response): Promise<voi
         minWithdrawal: wallet.min_withdrawal,
         withdrawalFee: wallet.withdrawal_fee,
         riwayatPenarikan: withdrawals,
-        riwayatTransaksi
+        riwayatTransaksi,
+        chartData,
+        chartMingguan: chartData,
+        chartBulanan: chartBulanan,
       }
     });
   } catch (error) {
@@ -646,6 +653,8 @@ export const getMitraWallet = async (req: Request, res: Response): Promise<void>
 
     const summary = await getWalletSummary(mitraRows[0].id);
     const withdrawals = await listWithdrawals(mitraRows[0].id);
+    const chartData = await getWeeklyChart(mitraRows[0].id);
+    const chartBulanan = await getMonthlyChart(mitraRows[0].id);
 
     res.json({
       success: true,
@@ -653,6 +662,9 @@ export const getMitraWallet = async (req: Request, res: Response): Promise<void>
       data: {
         store_name: mitraRows[0].store_name,
         ...summary,
+        chartData,
+        chartMingguan: chartData,
+        chartBulanan: chartBulanan,
         riwayat_penarikan: withdrawals,
       },
     });

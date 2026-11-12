@@ -6,10 +6,10 @@ import { sendPushNotificationToUser } from '../services/notificationService.js';
 
 // Inisialisasi Pusher Server SDK
 const pusher = new Pusher({
-  appId: (process.env.PUSHER_APP_ID || '').trim(),
-  key: (process.env.PUSHER_KEY || '').trim(),
-  secret: (process.env.PUSHER_SECRET || '').trim(),
-  cluster: (process.env.PUSHER_CLUSTER || 'ap1').trim(),
+  appId: process.env.PUSHER_APP_ID!,
+  key: process.env.PUSHER_APP_KEY!,
+  secret: process.env.PUSHER_APP_SECRET!,
+  cluster: 'mt1', // <-- Ganti dengan hasil intipan dari Flutter
   useTLS: true
 });
 
