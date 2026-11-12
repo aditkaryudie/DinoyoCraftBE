@@ -1,3 +1,4 @@
+import 'dotenv/config';
 // ============================================================
 //  src/server.ts
 //  Entry point — menjalankan server HTTP
@@ -6,6 +7,7 @@
 import app from './app.js';
 import { testConnection } from './config/database.js';
 import AiSetting from './models/AiSetting.js';
+import { startPaymentPoller } from './services/paymentPoller.js';
 
 const PORT = process.env.PORT || 5000;
 
@@ -27,7 +29,10 @@ const startServer = async (): Promise<void> => {
   });
   console.log('✅ AI Settings table synced and ready.');
 
-  app.listen(Number(PORT), '0.0.0.0', () => {
+  // Background poller pembayaran Midtrans (cadangan sinkronisasi status + auto-expire).
+  startPaymentPoller();
+
+  const server = app.listen(Number(PORT), '0.0.0.0', () => {
     console.log('='.repeat(50));
     console.log(`🚀 DinoyoCraft API Server running`);
     console.log(`   Host     : 0.0.0.0 (Accessible from Mobile & Local Network)`);
@@ -37,18 +42,29 @@ const startServer = async (): Promise<void> => {
     console.log(`   Health   : http://localhost:${PORT}/health`);
     console.log('='.repeat(50));
   });
+
+  server.on('error', (err: any) => {
+    console.error('❌ Server HTTP error:', err);
+  });
 };
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason: unknown) => {
-  console.error('🔥 Unhandled Rejection:', reason);
-  process.exit(1);
+  console.error('⚠️ Unhandled Rejection:', reason);
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err: Error) => {
-  console.error('🔥 Uncaught Exception:', err);
-  process.exit(1);
+  console.error('⚠️ Uncaught Exception:', err);
+});
+
+process.on('exit', (code: number) => {
+  console.log(`🛑 Node process exited with code: ${code}`);
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 Received SIGINT, shutting down gracefully...');
+  process.exit(0);
 });
 
 startServer().catch((err: unknown) => {

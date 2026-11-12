@@ -41,6 +41,7 @@ const express_1 = require("express");
 const aiController = __importStar(require("../controllers/aiController.js"));
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js");
+const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
 // Semua route AI memerlukan autentikasi
 router.use(authMiddleware_js_1.verifyToken);
@@ -49,7 +50,7 @@ router.use(authMiddleware_js_1.verifyToken);
  * @desc    Menjalankan analisis AI untuk konteks bisnis keramik
  * @access  Protected (mitra & admin)
  */
-router.post('/analyze', (0, authMiddleware_js_1.requireRole)(['mitra', 'admin']), (0, validatorMiddleware_js_1.validateBody)(validatorMiddleware_js_1.aiAnalysisValidationRules), aiController.analyzeWithAI);
+router.post('/analyze', (0, authMiddleware_js_1.requireRole)(['mitra', 'admin']), (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.aiAnalysisSchema), aiController.analyzeWithAI);
 /**
  * @route   GET /api/ai/history
  * @desc    Riwayat analisis AI milik pengguna yang sedang login

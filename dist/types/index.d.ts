@@ -4,6 +4,8 @@ export interface JwtPayload {
     userId: number;
     email: string;
     role: UserRole;
+    /** Versi sesi — dicocokkan dengan users.token_version (force-logout) */
+    ver?: number;
     iat?: number;
     exp?: number;
 }
@@ -65,6 +67,11 @@ export interface TransactionEntity extends RowDataPacket {
     amount: number;
     status: 'pending' | 'success' | 'failed' | 'cancelled';
     reference_code: string;
+    payment_token?: string | null;
+    inv_id?: string | null;
+    payment_url?: string | null;
+    qr_string?: string | null;
+    gateway_fee?: number;
     notes?: string;
     created_at: Date;
     updated_at: Date;
@@ -115,5 +122,50 @@ export interface CreateMasterDataDto {
     key: string;
     value: string;
     description?: string;
+}
+export interface PaymentFeeInfo {
+    fee_type?: string;
+    fee_rate?: string | number;
+    fee_fixed?: string | number;
+    total_fee?: string | number;
+    total_pay?: string | number;
+    min_amount?: number;
+    max_amount?: number;
+}
+export interface PaymentMethodItem {
+    id: string | number;
+    name: string;
+    label: string;
+    group?: string;
+    payment_type?: string;
+    gateway?: string;
+    fee?: PaymentFeeInfo;
+}
+export interface CreatePaymentResult {
+    order_id: number;
+    transaction_id?: number;
+    reference_code?: string;
+    gateway?: string;
+    gateway_order_id?: string | null;
+    payment_method: string;
+    payment_type?: string;
+    label?: string;
+    base_amount?: number;
+    service_fee?: number;
+    channel_fee?: number;
+    amount: number;
+    total_pay?: number;
+    fee?: PaymentFeeInfo;
+    payment_url?: string | null;
+    qr_string?: string | null;
+    qr_image_url?: string | null;
+    va_number?: string | null;
+    bank?: string | null;
+    biller_code?: string | null;
+    deeplink_url?: string | null;
+    expiry_time?: string | null;
+    token?: string | null;
+    reused?: boolean;
+    payment_status: 'pending' | 'paid' | 'failed' | 'expired' | 'cancelled';
 }
 //# sourceMappingURL=index.d.ts.map

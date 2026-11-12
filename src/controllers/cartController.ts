@@ -1,175 +1,201 @@
+// ============================================================
+//  src/controllers/cartController.ts
+//  Controller Keranjang Belanja Pelanggan
+// ============================================================
+
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
+import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendError } from '../utils/response.js';
+import { getVariantAvailableStock } from './productController.js';
 
-export const getCart = async (req: Request, res: Response): Promise<void> => {
+export const getCart = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
-    }
+    const userId = res.locals['userId'];
 
-    const query = `
-      SELECT 
-        c.id,
-        c.user_id,
-        c.product_id,
-        c.quantity,
-        c.created_at,
-        c.updated_at,
-        p.name AS product_name,
-        p.price AS product_price,
-        p.stock AS product_stock,
-        p.image_urls,
-        p.mitra_id,
-        m.store_name
-      FROM carts c
-      JOIN products p ON c.product_id = p.id
-      LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
-      WHERE c.user_id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
-      ORDER BY c.id DESC
-    `;
+    const [items]: any = await pool.query(
+      `SELECT 
+         c.id,
+         c.product_id,
+         c.quantity,
+         c.variant,
+         c.created_at,
+         p.name AS product_name,
+         p.price AS product_price,
+         p.stock AS product_stock,
+         p.weight_gram,
+         p.image_urls,
+         m.id AS mitra_id,
+         m.store_name,
+         m.workshop_address
+       FROM carts c
+       JOIN products p ON c.product_id = p.id
+       JOIN mitra_profiles m ON p.mitra_id = m.id
+       WHERE c.user_id = ? AND p.is_deleted = 0
+       ORDER BY c.id DESC`,
+      [userId]
+    );
 
-    const [rows]: any = await pool.query(query, [userId]);
-
-    let subtotal = 0;
-    const items = rows.map((r: any) => {
-      let image = '';
-      if (r.image_urls) {
-        try {
-          const parsed = typeof r.image_urls === 'string' ? JSON.parse(r.image_urls) : r.image_urls;
-          image = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : '';
-        } catch {
-          image = String(r.image_urls);
-        }
+    // Format foto produk jika JSON string
+    const formattedItems = items.map((item: any) => {
+      let images = [];
+      if (typeof item.image_urls === 'string') {
+        try { images = JSON.parse(item.image_urls); } catch { images = []; }
+      } else if (Array.isArray(item.image_urls)) {
+        images = item.image_urls;
       }
-      const price = Number(r.product_price);
-      const qty = Number(r.quantity);
-      subtotal += price * qty;
-
       return {
-        id: r.id,
-        product_id: r.product_id,
-        name: r.product_name,
-        price,
-        quantity: qty,
-        stock: Number(r.product_stock),
-        image,
-        mitra_id: r.mitra_id,
-        store_name: r.store_name || 'Toko Mitra',
+        ...item,
+        image_urls: images,
+        subtotal: Number(item.product_price) * item.quantity,
       };
     });
 
-    res.status(200).json({
-      success: true,
-      data: {
-        items,
-        total_items: items.length,
-        subtotal
-      }
-    });
+    const totalQuantity = formattedItems.reduce((acc: number, item: any) => acc + item.quantity, 0);
+    const totalPrice = formattedItems.reduce((acc: number, item: any) => acc + item.subtotal, 0);
+
+    sendSuccess(
+      res,
+      {
+        items: formattedItems,
+        totalQuantity,
+        totalPrice,
+      },
+      'Data keranjang berhasil diambil.'
+    );
   } catch (error) {
-    console.error('Error getCart:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengambil keranjang' });
+    console.error('❌ [getCart] Error:', error);
+    sendError(res, 'Gagal mengambil data keranjang belanja.');
   }
 };
 
 export const addToCart = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    const { product_id, quantity = 1 } = req.body;
+    const userId = res.locals['userId'];
+    const { product_id, quantity = 1, variant = null } = req.body;
 
-    if (!product_id) {
-      res.status(400).json({ success: false, message: 'product_id wajib diisi' });
+    // 1. Cek apakah produk tersedia dan aktif
+    const [products]: any = await pool.query(
+      'SELECT id, name, price, stock, variants, is_deleted FROM products WHERE id = ?',
+      [product_id]
+    );
+
+    if (products.length === 0 || products[0].is_deleted) {
+      sendNotFound(res, 'Produk tidak ditemukan atau sudah tidak tersedia.');
       return;
     }
 
-    const qty = Math.max(1, parseInt(String(quantity), 10) || 1);
+    const product = products[0];
+    const availableStock = getVariantAvailableStock(product.variants, Number(product.stock) || 0, variant);
 
-    const [existing]: any = await pool.query(
-      'SELECT id, quantity FROM carts WHERE user_id = ? AND product_id = ? LIMIT 1',
-      [userId, product_id]
+    // 2. Cek apakah produk dan varian yang sama sudah ada di keranjang
+    const [existingCart]: any = await pool.query(
+      'SELECT id, quantity FROM carts WHERE user_id = ? AND product_id = ? AND (variant = ? OR (variant IS NULL AND ? IS NULL))',
+      [userId, product_id, variant, variant]
     );
 
-    if (existing && existing.length > 0) {
-      const newQty = existing[0].quantity + qty;
-      await pool.query('UPDATE carts SET quantity = ?, updated_at = NOW() WHERE id = ?', [newQty, existing[0].id]);
-      res.status(200).json({ success: true, message: 'Kuantitas produk di keranjang berhasil diperbarui' });
+    if (existingCart.length > 0) {
+      const newQuantity = existingCart[0].quantity + quantity;
+      if (newQuantity > availableStock) {
+        sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
+        return;
+      }
+
+      await pool.query('UPDATE carts SET quantity = ? WHERE id = ?', [newQuantity, existingCart[0].id]);
+      const [updated]: any = await pool.query('SELECT * FROM carts WHERE id = ?', [existingCart[0].id]);
+      sendSuccess(res, updated[0], 'Jumlah produk di keranjang berhasil diperbarui.');
+      return;
+    }
+
+    // 3. Tambah baru ke keranjang
+    if (quantity > availableStock) {
+      sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
       return;
     }
 
     const [result]: any = await pool.query(
-      'INSERT INTO carts (user_id, product_id, quantity, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())',
-      [userId, product_id, qty]
+      'INSERT INTO carts (user_id, product_id, quantity, variant) VALUES (?, ?, ?, ?)',
+      [userId, product_id, quantity, variant]
     );
 
-    res.status(201).json({
-      success: true,
-      message: 'Produk berhasil ditambahkan ke keranjang',
-      cartId: result.insertId
-    });
+    const [newItem]: any = await pool.query('SELECT * FROM carts WHERE id = ?', [result.insertId]);
+    sendCreated(res, newItem[0], 'Produk berhasil ditambahkan ke keranjang.');
   } catch (error) {
-    console.error('Error addToCart:', error);
-    res.status(500).json({ success: false, message: 'Gagal menambahkan ke keranjang' });
+    console.error('❌ [addToCart] Error:', error);
+    sendError(res, 'Gagal menambahkan produk ke keranjang.');
   }
 };
 
 export const updateCartItem = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    const userId = res.locals['userId'];
     const { id } = req.params;
-    const { quantity } = req.body;
+    const { quantity, variant } = req.body;
 
-    const qty = parseInt(String(quantity), 10);
-    if (isNaN(qty) || qty <= 0) {
-      await pool.query('DELETE FROM carts WHERE id = ? AND user_id = ?', [id, userId]);
-      res.status(200).json({ success: true, message: 'Item keranjang dihapus' });
+    const [cartItem]: any = await pool.query(
+      `SELECT c.id, c.product_id, c.quantity, c.variant, p.stock, p.variants 
+       FROM carts c
+       JOIN products p ON c.product_id = p.id
+       WHERE c.id = ? AND c.user_id = ?`,
+      [id, userId]
+    );
+
+    if (cartItem.length === 0) {
+      sendNotFound(res, 'Item keranjang tidak ditemukan.');
       return;
     }
 
+    const effectiveVariant = variant !== undefined ? variant : cartItem[0].variant;
+    const availableStock = getVariantAvailableStock(cartItem[0].variants, Number(cartItem[0].stock) || 0, effectiveVariant);
+    if (quantity !== undefined && quantity > availableStock) {
+      sendBadRequest(res, `Stok produk tidak mencukupi (tersisa ${availableStock}).`);
+      return;
+    }
+
+    await pool.query(
+      `UPDATE carts SET 
+         quantity = COALESCE(?, quantity),
+         variant = COALESCE(?, variant)
+       WHERE id = ? AND user_id = ?`,
+      [quantity, variant, id, userId]
+    );
+
+    const [updated]: any = await pool.query('SELECT * FROM carts WHERE id = ?', [id]);
+    sendSuccess(res, updated[0], 'Item keranjang berhasil diperbarui.');
+  } catch (error) {
+    console.error('❌ [updateCartItem] Error:', error);
+    sendError(res, 'Gagal memperbarui item keranjang.');
+  }
+};
+
+export const deleteCartItem = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    const { id } = req.params;
+
     const [result]: any = await pool.query(
-      'UPDATE carts SET quantity = ?, updated_at = NOW() WHERE id = ? AND user_id = ?',
-      [qty, id, userId]
+      'DELETE FROM carts WHERE id = ? AND user_id = ?',
+      [id, userId]
     );
 
     if (result.affectedRows === 0) {
-      res.status(404).json({ success: false, message: 'Item keranjang tidak ditemukan' });
+      sendNotFound(res, 'Item keranjang tidak ditemukan.');
       return;
     }
 
-    res.status(200).json({ success: true, message: 'Keranjang berhasil diperbarui' });
+    sendSuccess(res, null, 'Item berhasil dihapus dari keranjang.');
   } catch (error) {
-    console.error('Error updateCartItem:', error);
-    res.status(500).json({ success: false, message: 'Gagal memperbarui item keranjang' });
+    console.error('❌ [deleteCartItem] Error:', error);
+    sendError(res, 'Gagal menghapus item dari keranjang.');
   }
 };
 
-export const removeCartItem = async (req: Request, res: Response): Promise<void> => {
+export const clearCart = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    const { id } = req.params;
-
-    const [result]: any = await pool.query('DELETE FROM carts WHERE id = ? AND user_id = ?', [id, userId]);
-    if (result.affectedRows === 0) {
-      res.status(404).json({ success: false, message: 'Item keranjang tidak ditemukan' });
-      return;
-    }
-
-    res.status(200).json({ success: true, message: 'Item berhasil dihapus dari keranjang' });
-  } catch (error) {
-    console.error('Error removeCartItem:', error);
-    res.status(500).json({ success: false, message: 'Gagal menghapus item keranjang' });
-  }
-};
-
-export const clearCart = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    const userId = res.locals['userId'];
     await pool.query('DELETE FROM carts WHERE user_id = ?', [userId]);
-    res.status(200).json({ success: true, message: 'Keranjang berhasil dikosongkan' });
+    sendSuccess(res, null, 'Keranjang belanja berhasil dikosongkan.');
   } catch (error) {
-    console.error('Error clearCart:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengosongkan keranjang' });
+    console.error('❌ [clearCart] Error:', error);
+    sendError(res, 'Gagal mengosongkan keranjang belanja.');
   }
 };
-

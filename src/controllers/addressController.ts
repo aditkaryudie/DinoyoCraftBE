@@ -1,134 +1,192 @@
+// ============================================================
+//  src/controllers/addressController.ts
+//  Controller Buku Alamat Pengiriman Pengguna
+// ============================================================
+
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
+import { sendSuccess, sendCreated, sendNotFound, sendError } from '../utils/response.js';
 
-export const getAddresses = async (req: Request, res: Response): Promise<void> => {
+export const getUserAddresses = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
-    }
-
+    const userId = res.locals['userId'];
     const [rows]: any = await pool.query(
-      'SELECT * FROM user_addresses WHERE user_id = ? ORDER BY is_default DESC, id DESC',
+      `SELECT id, recipient_name, phone, full_address, city, postal_code, label, is_default, created_at 
+       FROM user_addresses 
+       WHERE user_id = ? 
+       ORDER BY is_default DESC, id DESC`,
       [userId]
     );
 
-    res.status(200).json({ success: true, data: rows });
+    sendSuccess(res, rows, 'Daftar alamat berhasil diambil.');
   } catch (error) {
-    console.error('Error getAddresses:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengambil daftar alamat' });
+    console.error('❌ [getUserAddresses] Error:', error);
+    sendError(res, 'Gagal mengambil daftar alamat.');
+  }
+};
+
+export const getAddressById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    const { id } = req.params;
+
+    const [rows]: any = await pool.query(
+      `SELECT id, recipient_name, phone, full_address, city, postal_code, label, is_default, created_at 
+       FROM user_addresses 
+       WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
+
+    if (rows.length === 0) {
+      sendNotFound(res, 'Alamat tidak ditemukan.');
+      return;
+    }
+
+    sendSuccess(res, rows[0], 'Detail alamat berhasil diambil.');
+  } catch (error) {
+    console.error('❌ [getAddressById] Error:', error);
+    sendError(res, 'Gagal mengambil detail alamat.');
   }
 };
 
 export const createAddress = async (req: Request, res: Response): Promise<void> => {
+  const connection = await pool.getConnection();
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
+    await connection.beginTransaction();
+    const userId = res.locals['userId'];
+    const { recipient_name, phone, full_address, city, postal_code, label = 'Rumah', is_default = false } = req.body;
+
+    // Jika diset sebagai default atau ini alamat pertama, jadikan default
+    const [countRows]: any = await connection.query('SELECT COUNT(*) as total FROM user_addresses WHERE user_id = ?', [userId]);
+    const isFirstAddress = countRows[0]?.total === 0;
+    const shouldBeDefault = is_default || isFirstAddress;
+
+    if (shouldBeDefault) {
+      await connection.query('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [userId]);
     }
 
-    const { recipient_name, phone, full_address, is_default } = req.body;
-    if (!recipient_name || !phone || !full_address) {
-      res.status(400).json({ success: false, message: 'Nama penerima, no HP, dan alamat lengkap wajib diisi' });
-      return;
-    }
-
-    const isDefaultInt = is_default ? 1 : 0;
-    if (isDefaultInt === 1) {
-      await pool.query('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [userId]);
-    }
-
-    const [result]: any = await pool.query(
-      `INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, is_default, created_at)
-       VALUES (?, ?, ?, ?, ?, NOW())`,
-      [userId, recipient_name.trim(), phone.trim(), full_address.trim(), isDefaultInt]
+    const [result]: any = await connection.query(
+      `INSERT INTO user_addresses (user_id, recipient_name, phone, full_address, city, postal_code, label, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, recipient_name, phone, full_address, city || null, postal_code || null, label, shouldBeDefault ? 1 : 0]
     );
 
-    const [created]: any = await pool.query('SELECT * FROM user_addresses WHERE id = ?', [result.insertId]);
+    await connection.commit();
 
-    res.status(201).json({
-      success: true,
-      message: 'Alamat berhasil ditambahkan',
-      data: created[0]
-    });
+    const [newAddress]: any = await pool.query('SELECT * FROM user_addresses WHERE id = ?', [result.insertId]);
+    sendCreated(res, newAddress[0], 'Alamat berhasil ditambahkan.');
   } catch (error) {
-    console.error('Error createAddress:', error);
-    res.status(500).json({ success: false, message: 'Gagal menambahkan alamat' });
+    await connection.rollback();
+    console.error('❌ [createAddress] Error:', error);
+    sendError(res, 'Gagal menambahkan alamat.');
+  } finally {
+    connection.release();
   }
 };
 
 export const updateAddress = async (req: Request, res: Response): Promise<void> => {
+  const connection = await pool.getConnection();
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    await connection.beginTransaction();
+    const userId = res.locals['userId'];
     const { id } = req.params;
-    const { recipient_name, phone, full_address, is_default } = req.body;
+    const { recipient_name, phone, full_address, city, postal_code, label, is_default } = req.body;
 
-    const [check]: any = await pool.query('SELECT id FROM user_addresses WHERE id = ? AND user_id = ?', [id, userId]);
-    if (!check || check.length === 0) {
-      res.status(404).json({ success: false, message: 'Alamat tidak ditemukan' });
+    const [existing]: any = await connection.query(
+      'SELECT id FROM user_addresses WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+
+    if (existing.length === 0) {
+      await connection.rollback();
+      sendNotFound(res, 'Alamat tidak ditemukan.');
       return;
     }
 
-    const isDefaultInt = is_default ? 1 : 0;
-    if (isDefaultInt === 1) {
-      await pool.query('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [userId]);
+    if (is_default) {
+      await connection.query('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [userId]);
     }
 
-    await pool.query(
-      `UPDATE user_addresses 
-       SET recipient_name = COALESCE(?, recipient_name),
-           phone = COALESCE(?, phone),
-           full_address = COALESCE(?, full_address),
-           is_default = COALESCE(?, is_default)
+    await connection.query(
+      `UPDATE user_addresses SET 
+         recipient_name = COALESCE(?, recipient_name),
+         phone = COALESCE(?, phone),
+         full_address = COALESCE(?, full_address),
+         city = COALESCE(?, city),
+         postal_code = COALESCE(?, postal_code),
+         label = COALESCE(?, label),
+         is_default = COALESCE(?, is_default)
        WHERE id = ? AND user_id = ?`,
-      [recipient_name ?? null, phone ?? null, full_address ?? null, is_default !== undefined ? isDefaultInt : null, id, userId]
+      [recipient_name, phone, full_address, city, postal_code, label, is_default !== undefined ? (is_default ? 1 : 0) : null, id, userId]
     );
 
+    await connection.commit();
+
     const [updated]: any = await pool.query('SELECT * FROM user_addresses WHERE id = ?', [id]);
-    res.status(200).json({ success: true, message: 'Alamat berhasil diperbarui', data: updated[0] });
+    sendSuccess(res, updated[0], 'Alamat berhasil diperbarui.');
   } catch (error) {
-    console.error('Error updateAddress:', error);
-    res.status(500).json({ success: false, message: 'Gagal memperbarui alamat' });
+    await connection.rollback();
+    console.error('❌ [updateAddress] Error:', error);
+    sendError(res, 'Gagal memperbarui alamat.');
+  } finally {
+    connection.release();
   }
 };
 
 export const deleteAddress = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    const userId = res.locals['userId'];
     const { id } = req.params;
 
-    const [result]: any = await pool.query('DELETE FROM user_addresses WHERE id = ? AND user_id = ?', [id, userId]);
+    const [result]: any = await pool.query(
+      'DELETE FROM user_addresses WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+
     if (result.affectedRows === 0) {
-      res.status(404).json({ success: false, message: 'Alamat tidak ditemukan' });
+      sendNotFound(res, 'Alamat tidak ditemukan.');
       return;
     }
 
-    res.status(200).json({ success: true, message: 'Alamat berhasil dihapus' });
+    sendSuccess(res, null, 'Alamat berhasil dihapus.');
   } catch (error) {
-    console.error('Error deleteAddress:', error);
-    res.status(500).json({ success: false, message: 'Gagal menghapus alamat' });
+    console.error('❌ [deleteAddress] Error:', error);
+    sendError(res, 'Gagal menghapus alamat.');
   }
 };
 
 export const setDefaultAddress = async (req: Request, res: Response): Promise<void> => {
+  const connection = await pool.getConnection();
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    await connection.beginTransaction();
+    const userId = res.locals['userId'];
     const { id } = req.params;
 
-    await pool.query('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [userId]);
-    const [result]: any = await pool.query('UPDATE user_addresses SET is_default = 1 WHERE id = ? AND user_id = ?', [id, userId]);
+    const [check]: any = await connection.query(
+      'SELECT id FROM user_addresses WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
 
-    if (result.affectedRows === 0) {
-      res.status(404).json({ success: false, message: 'Alamat tidak ditemukan' });
+    if (check.length === 0) {
+      await connection.rollback();
+      sendNotFound(res, 'Alamat tidak ditemukan.');
       return;
     }
 
-    res.status(200).json({ success: true, message: 'Alamat default berhasil disetel' });
+    await connection.query('UPDATE user_addresses SET is_default = 0 WHERE user_id = ?', [userId]);
+    await connection.query('UPDATE user_addresses SET is_default = 1 WHERE id = ? AND user_id = ?', [id, userId]);
+
+    await connection.commit();
+    sendSuccess(res, null, 'Alamat utama berhasil diubah.');
   } catch (error) {
-    console.error('Error setDefaultAddress:', error);
-    res.status(500).json({ success: false, message: 'Gagal menyetel alamat default' });
+    await connection.rollback();
+    console.error('❌ [setDefaultAddress] Error:', error);
+    sendError(res, 'Gagal mengubah alamat default.');
+  } finally {
+    connection.release();
   }
 };
 
+
+// Aliases
+export const getAddresses = getUserAddresses;

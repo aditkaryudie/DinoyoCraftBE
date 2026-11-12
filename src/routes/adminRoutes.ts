@@ -7,7 +7,12 @@ import { Router } from 'express';
 import * as adminController from '../controllers/adminController.js';
 import { getAiSettings, updateAiSettings } from '../controllers/aiSettingController.js';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
-import { validateBody } from '../middlewares/validatorMiddleware.js';
+import { validateZod } from '../middlewares/validatorMiddleware.js';
+import {
+  updateUserStatusSchema,
+  createMasterDataSchema,
+  verifyMitraStoreSchema,
+} from '../validators/schemas.js';
 
 const router = Router();
 
@@ -49,9 +54,37 @@ router.get('/users', adminController.getAllUsers);
  */
 router.patch(
   '/users/:id/status',
-  validateBody([{ field: 'is_active', required: true, type: 'boolean' }]),
+  validateZod(updateUserStatusSchema),
   adminController.updateUserStatus
 );
+
+/**
+ * @route   PATCH /api/admin/users/:id/force-logout
+ * @desc    Mengakhiri seluruh sesi pengguna di semua perangkat (token_version +1)
+ * @access  Admin only
+ */
+router.patch('/users/:id/force-logout', adminController.forceLogoutUser);
+
+/**
+ * @route   GET /api/admin/transactions
+ * @desc    Daftar seluruh transaksi lintas toko beserta status Midtrans & paid_at
+ * @access  Admin only
+ */
+router.get('/transactions', adminController.getAdminTransactions);
+
+/**
+ * @route   GET /api/admin/withdrawals?status=pending
+ * @desc    Daftar pengajuan tarik saldo mitra
+ * @access  Admin only
+ */
+router.get('/withdrawals', adminController.getWithdrawals);
+
+/**
+ * @route   PATCH /api/admin/withdrawals/:id
+ * @desc    Setujui / tolak pengajuan penarikan
+ * @access  Admin only
+ */
+router.patch('/withdrawals/:id', adminController.handleWithdrawalAction);
 
 /**
  * @route   GET /api/admin/master-data
@@ -67,11 +100,7 @@ router.get('/master-data', adminController.getMasterData);
  */
 router.post(
   '/master-data',
-  validateBody([
-    { field: 'category', required: true, type: 'string', minLength: 1, maxLength: 50 },
-    { field: 'key', required: true, type: 'string', minLength: 1, maxLength: 100 },
-    { field: 'value', required: true, type: 'string', minLength: 1 },
-  ]),
+  validateZod(createMasterDataSchema),
   adminController.createMasterData
 );
 
@@ -89,7 +118,7 @@ router.get('/verifikasi', adminController.getVerifikasiList);
  */
 router.patch(
   '/verifikasi/:id',
-  validateBody([{ field: 'status', required: true, type: 'string' }]),
+  validateZod(verifyMitraStoreSchema),
   adminController.verifyMitraStore
 );
 

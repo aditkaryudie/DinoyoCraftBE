@@ -1,124 +1,245 @@
+// ============================================================
+//  src/controllers/paymentController.ts
+//  Controller Pembayaran Midtrans Core API (PRD_Midtrans_Sandbox §5.2)
+// ============================================================
+
 import { Request, Response } from 'express';
-import pool from '../config/database.js';
+import { verifySignatureKey } from '../services/midtransService.js';
+import {
+  applyMidtransStatus,
+  cancelOrderPayment,
+  checkAndSyncOrderPayment,
+  createOrUpdateCharge,
+  getPaymentMethodsPayload,
+  getSandboxSimulatorPage,
+  simulateOrderPaid,
+} from '../services/paymentGatewayService.js';
+import { findTransactionByRef } from '../services/orderSettlement.js';
+import { sendBadRequest, sendError, sendSuccess } from '../utils/response.js';
 
-export const getPaymentMethods = async (_req: Request, res: Response): Promise<void> => {
-  const methods = [
-    {
-      id: 'qris',
-      name: 'QRIS Real-Time',
-      category: 'qris',
-      icon_url: '/assets/icons/payment/qris.svg',
-      description: 'Bayar instan via GoPay, OVO, Dana, ShopeePay, BCA, dll.'
-    },
-    {
-      id: 'bca_va',
-      name: 'BCA Virtual Account',
-      category: 'va',
-      icon_url: '/assets/icons/payment/bca.svg',
-      description: 'Transfer via ATM atau Mobile Banking BCA'
-    },
-    {
-      id: 'bri_va',
-      name: 'BRI Virtual Account',
-      category: 'va',
-      icon_url: '/assets/icons/payment/bri.svg',
-      description: 'Transfer via BRImo atau ATM BRI'
-    },
-    {
-      id: 'mandiri_va',
-      name: 'Mandiri Virtual Account',
-      category: 'va',
-      icon_url: '/assets/icons/payment/mandiri.svg',
-      description: 'Transfer via Livin by Mandiri'
-    }
-  ];
-
-  res.status(200).json({
-    success: true,
-    data: methods
-  });
+/** GET /api/payments/methods — Daftar metode Midtrans aktif & konfigurasi biaya layanan. */
+export const getMethods = async (_req: Request, res: Response): Promise<void> => {
+  sendSuccess(res, getPaymentMethodsPayload(), 'Daftar metode pembayaran berhasil diambil.');
 };
 
-export const createPayment = async (req: Request, res: Response): Promise<void> => {
+/** POST /api/payments/create — Buat atau ambil ulang tagihan Midtrans untuk satu order. */
+export const createOrderPayment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { order_id, payment_method = 'qris' } = req.body;
+    const userId = Number(res.locals['userId']);
+    const role = String(res.locals['role'] || 'user');
+    const orderId = Number(req.body?.order_id);
+    const paymentMethod = String(req.body?.payment_method || 'qris').trim();
 
-    if (!order_id) {
-      res.status(400).json({ success: false, message: 'order_id wajib diisi' });
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      sendBadRequest(res, 'ID pesanan tidak valid.');
       return;
     }
 
-    const [orders]: any = await pool.query(
-      `SELECT o.id, o.total_amount, o.status, t.id AS transaction_id, t.reference_code
-       FROM orders o
-       LEFT JOIN transactions t ON o.transaction_id = t.id
-       WHERE o.id = ? LIMIT 1`,
-      [order_id]
+    const result = await createOrUpdateCharge(userId, role, orderId, paymentMethod);
+    const host = req.get('host');
+    if (
+      typeof result['deeplink_url'] === 'string' &&
+      result['deeplink_url'].startsWith('/') &&
+      host
+    ) {
+      const origin = `${req.protocol}://${host}`;
+      result['deeplink_url'] = `${origin}${result['deeplink_url']}`;
+      result['payment_url'] = result['deeplink_url'];
+    }
+    sendSuccess(
+      res,
+      result,
+      result.reused
+        ? 'Sesi pembayaran aktif berhasil dimuat ulang.'
+        : 'Tagihan pembayaran Midtrans berhasil dibuat.'
     );
-
-    if (!orders || orders.length === 0) {
-      res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
-      return;
+  } catch (err: any) {
+    const status = Number(err?.status || 500);
+    if (status >= 500) {
+      console.error('❌ [createOrderPayment] Error:', err);
     }
-
-    const order = orders[0];
-    const amount = Number(order.total_amount);
-    const refCode = order.reference_code || `TRX-${order.id}-${Date.now()}`;
-
-    // Dummy/Mock QRIS code compliant standard (or gateway response)
-    const qrisString = `00020101021226670016ID.CO.SOCIABUZZ.WWW01189360091800000000010215${refCode}520458125303360540${amount}.005802ID5910DINOYOCRAFT6006MALANG62070703A016304`;
-    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrisString)}`;
-
-    res.status(200).json({
-      success: true,
-      message: 'Pembayaran berhasil diinisiasi',
-      data: {
-        order_id: Number(order_id),
-        reference_code: refCode,
-        payment_method,
-        amount,
-        qris_string: qrisString,
-        qr_image_url: qrImageUrl,
-        expiry_time: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      }
-    });
-  } catch (error) {
-    console.error('Error createPayment:', error);
-    res.status(500).json({ success: false, message: 'Gagal membuat tagihan pembayaran' });
+    sendError(res, err?.message || 'Gagal membuat transaksi pembayaran.', status);
   }
 };
 
-export const getPaymentStatus = async (req: Request, res: Response): Promise<void> => {
+/** GET /api/payments/status/:orderId — Status pembayaran terkini (sinkron Midtrans bila pending). */
+export const checkOrderStatus = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { orderId } = req.params;
+    const userId = Number(res.locals['userId']);
+    const role = String(res.locals['role'] || 'user');
+    const orderId = Number(req.params['orderId']);
 
-    const [orders]: any = await pool.query(
-      `SELECT o.id, o.status AS order_status, o.total_amount, t.status AS payment_status, t.reference_code
-       FROM orders o
-       LEFT JOIN transactions t ON o.transaction_id = t.id
-       WHERE o.id = ? LIMIT 1`,
-      [orderId]
-    );
-
-    if (!orders || orders.length === 0) {
-      res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      sendBadRequest(res, 'ID pesanan tidak valid.');
       return;
     }
 
-    const order = orders[0];
-    res.status(200).json({
-      success: true,
-      data: {
-        order_id: Number(orderId),
-        reference_code: order.reference_code,
-        payment_status: order.payment_status || order.order_status,
-        order_status: order.order_status,
-        is_paid: order.order_status !== 'pending' && order.payment_status === 'success',
-      }
-    });
-  } catch (error) {
-    console.error('Error getPaymentStatus:', error);
-    res.status(500).json({ success: false, message: 'Gagal memeriksa status pembayaran' });
+    const result = await checkAndSyncOrderPayment(userId, role, orderId);
+    sendSuccess(res, result, 'Status pembayaran berhasil diperbarui.');
+  } catch (err: any) {
+    const status = Number(err?.status || 500);
+    if (status >= 500) {
+      console.error('❌ [checkOrderStatus] Error:', err);
+    }
+    sendError(res, err?.message || 'Gagal memeriksa status pembayaran.', status);
   }
 };
 
+/** POST /api/payments/cancel/:orderId — Batalkan tagihan Midtrans dan batalkan pesanan. */
+export const cancelPayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = Number(res.locals['userId']);
+    const role = String(res.locals['role'] || 'user');
+    const orderId = Number(req.params['orderId']);
+    const reason =
+      typeof req.body?.reason === 'string' && req.body.reason.trim()
+        ? req.body.reason.trim()
+        : 'Dibatalkan oleh pembeli';
+
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      sendBadRequest(res, 'ID pesanan tidak valid.');
+      return;
+    }
+
+    const result = await cancelOrderPayment(userId, role, orderId, reason);
+    sendSuccess(res, result, 'Pembayaran dan pesanan berhasil dibatalkan.');
+  } catch (err: any) {
+    const status = Number(err?.status || 500);
+    if (status >= 500) {
+      console.error('❌ [cancelPayment] Error:', err);
+    }
+    sendError(res, err?.message || 'Gagal membatalkan pembayaran.', status);
+  }
+};
+
+/** POST /api/payments/webhook — HTTP Notification dari Midtrans + verifikasi SHA512 signature_key. */
+export const handleWebhook = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      order_id: orderId,
+      status_code: statusCode,
+      gross_amount: grossAmount,
+      signature_key: signatureKey,
+      transaction_status: transactionStatus,
+      fraud_status: fraudStatus,
+      transaction_id: transactionId,
+    } = req.body ?? {};
+
+    if (!orderId || !statusCode || grossAmount === undefined || !signatureKey) {
+      res.status(400).json({
+        success: false,
+        message: 'Payload notifikasi Midtrans tidak lengkap.',
+      });
+      return;
+    }
+
+    const validSignature = verifySignatureKey(
+      String(orderId),
+      String(statusCode),
+      String(grossAmount),
+      String(signatureKey)
+    );
+
+    if (!validSignature) {
+      console.warn(`⚠️ [Midtrans Webhook] Signature tidak valid untuk order_id=${orderId}`);
+      res.status(403).json({
+        success: false,
+        message: 'Signature notifikasi Midtrans tidak valid.',
+      });
+      return;
+    }
+
+    const trx = await findTransactionByRef(
+      String(orderId),
+      transactionId ? String(transactionId) : undefined
+    );
+
+    if (!trx) {
+      console.warn(`⚠️ [Midtrans Webhook] Transaksi tidak ditemukan untuk order_id=${orderId}`);
+      // Balas 200 supaya Midtrans tidak retry terus (mis. test notification / orphan sandbox order)
+      res.status(200).json({
+        success: true,
+        message: 'Notifikasi diterima (transaksi lokal tidak ditemukan).',
+      });
+      return;
+    }
+
+    const mappedStatus = await applyMidtransStatus(
+      trx,
+      String(transactionStatus || ''),
+      fraudStatus ? String(fraudStatus) : null,
+      String(grossAmount),
+      req.body
+    );
+
+    console.log(
+      `📩 [Midtrans Webhook] order_id=${orderId} (${transactionStatus}) → ${mappedStatus}`
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Notifikasi Midtrans berhasil diproses.',
+      status: mappedStatus,
+    });
+  } catch (err: any) {
+    const status = Number(err?.status || 500);
+    console.error('❌ [Midtrans Webhook] Error:', err?.message || err);
+    res.status(status).json({
+      success: false,
+      message: err?.message || 'Gagal memproses notifikasi Midtrans.',
+    });
+  }
+};
+
+/** POST /api/payments/simulate-paid/:orderId — Shortcut Sandbox only (otomatis mati di Production). */
+export const simulatePayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = Number(res.locals['userId']);
+    const role = String(res.locals['role'] || 'user');
+    const orderId = Number(req.params['orderId']);
+
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      sendBadRequest(res, 'ID pesanan tidak valid.');
+      return;
+    }
+
+    const result = await simulateOrderPaid(userId, role, orderId);
+    sendSuccess(res, result, 'Simulasi pembayaran Sandbox berhasil ditandai lunas.');
+  } catch (err: any) {
+    const status = Number(err?.status || 500);
+    if (status >= 500) {
+      console.error('❌ [simulatePayment] Error:', err);
+    }
+    sendError(res, err?.message || 'Gagal menjalankan simulasi pembayaran.', status);
+  }
+};
+
+/** GET /api/payments/sandbox-simulator/:orderId — Redirect auto-POST ke Midtrans Simulator Sandbox (VA/QRIS). */
+export const openSandboxSimulator = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const orderId = Number(req.params['orderId']);
+    const ref = String(req.query['ref'] || '').trim();
+    const sig = String(req.query['sig'] || '').trim();
+
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      res.status(400).type('text/plain').send('ID pesanan tidak valid.');
+      return;
+    }
+
+    const page = await getSandboxSimulatorPage(orderId, ref, sig);
+    if (page.redirectUrl) {
+      res.redirect(page.redirectUrl);
+      return;
+    }
+
+    // Izinkan form auto-submit lintas origin khusus menuju simulator Sandbox Midtrans
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'unsafe-inline'; form-action https://simulator.sandbox.midtrans.com; style-src 'unsafe-inline'"
+    );
+    res.status(page.status).type('html').send(page.html);
+  } catch (err: any) {
+    console.error('❌ [openSandboxSimulator] Error:', err);
+    res.status(500).type('text/plain').send('Gagal membuka halaman simulator Midtrans.');
+  }
+};

@@ -1,118 +1,203 @@
+// ============================================================
+//  src/controllers/reviewController.ts
+//  Controller Ulasan & Rating Produk Keramik
+// ============================================================
+
 import { Request, Response } from 'express';
 import pool from '../config/database.js';
+import { sendSuccess, sendCreated, sendNotFound, sendForbidden, sendError } from '../utils/response.js';
 
 export const getProductReviews = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { productId } = req.params;
 
-    const query = `
-      SELECT 
-        r.id,
-        r.user_id,
-        r.product_id,
-        r.rating,
-        r.comment,
-        r.variant,
-        r.photo_urls,
-        r.helpful_count,
-        r.created_at,
-        u.name AS reviewer_name,
-        u.avatar_url AS reviewer_avatar
-      FROM reviews r
-      LEFT JOIN users u ON r.user_id = u.id
-      WHERE r.product_id = ?
-      ORDER BY r.created_at DESC
-    `;
+    const [reviews]: any = await pool.query(
+      `SELECT 
+         r.id,
+         r.rating,
+         r.variant,
+         r.comment,
+         r.photo_urls,
+         r.helpful_count,
+         r.seller_reply,
+         r.replied_at,
+         r.created_at,
+         u.name AS user_name,
+         u.avatar_url AS user_avatar
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       WHERE r.product_id = ?
+       ORDER BY r.id DESC`,
+      [productId]
+    );
 
-    const [rows]: any = await pool.query(query, [id]).catch(() => [[]]);
-
-    const formattedReviews = rows.map((r: any) => {
-      let photos: string[] = [];
-      if (r.photo_urls) {
-        try {
-          const parsed = typeof r.photo_urls === 'string' ? JSON.parse(r.photo_urls) : r.photo_urls;
-          if (Array.isArray(parsed)) photos = parsed;
-        } catch {
-          photos = [String(r.photo_urls)];
-        }
+    const formattedReviews = reviews.map((rev: any) => {
+      let photos = [];
+      if (typeof rev.photo_urls === 'string') {
+        try { photos = JSON.parse(rev.photo_urls); } catch { photos = []; }
+      } else if (Array.isArray(rev.photo_urls)) {
+        photos = rev.photo_urls;
       }
-
-      return {
-        id: r.id,
-        user_id: r.user_id,
-        name: r.reviewer_name || 'Pembeli DinoyoCraft',
-        avatar_url: r.reviewer_avatar,
-        rating: Number(r.rating),
-        comment: r.comment || '',
-        variant: r.variant || 'Default',
-        photos,
-        helpful_count: Number(r.helpful_count || 0),
-        created_at: r.created_at,
-      };
+      return { ...rev, photo_urls: photos };
     });
 
-    // Kalkulasi rata-rata rating
+    // Hitung ringkasan rating
     const totalReviews = formattedReviews.length;
-    const avgRating = totalReviews > 0
-      ? formattedReviews.reduce((acc: number, cur: any) => acc + cur.rating, 0) / totalReviews
-      : 5.0;
+    const avgRating =
+      totalReviews > 0
+        ? Number(
+            (formattedReviews.reduce((acc: number, curr: any) => acc + curr.rating, 0) / totalReviews).toFixed(1)
+          )
+        : 0;
 
-    res.status(200).json({
-      success: true,
-      data: {
-        product_id: Number(id),
-        average_rating: Number(avgRating.toFixed(1)),
-        total_reviews: totalReviews,
-        reviews: formattedReviews
+    const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    formattedReviews.forEach((rev: any) => {
+      if (distribution[rev.rating] !== undefined) {
+        distribution[rev.rating]++;
       }
     });
+
+    sendSuccess(
+      res,
+      {
+        totalReviews,
+        avgRating,
+        distribution,
+        reviews: formattedReviews,
+      },
+      'Daftar ulasan produk berhasil diambil.'
+    );
   } catch (error) {
-    console.error('Error getProductReviews:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengambil ulasan produk' });
+    console.error('❌ [getProductReviews] Error:', error);
+    sendError(res, 'Gagal mengambil ulasan produk.');
   }
 };
 
 export const createReview = async (req: Request, res: Response): Promise<void> => {
+  const connection = await pool.getConnection();
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
-    }
+    await connection.beginTransaction();
 
-    const { product_id, rating = 5, comment, variant, photo_urls } = req.body;
-    if (!product_id) {
-      res.status(400).json({ success: false, message: 'product_id wajib diisi' });
-      return;
-    }
+    const userId = res.locals['userId'];
+    const { product_id, order_item_id, rating, variant, comment, photo_urls } = req.body;
 
-    const photoUrlsJson = photo_urls ? JSON.stringify(photo_urls) : null;
-
-    const [result]: any = await pool.query(
-      `INSERT INTO reviews (user_id, product_id, rating, comment, variant, photo_urls, helpful_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
-      [userId, product_id, Number(rating), comment || '', variant || null, photoUrlsJson]
+    // 1. Cek apakah produk valid
+    const [products]: any = await connection.query(
+      'SELECT id, mitra_id FROM products WHERE id = ? AND is_deleted = 0',
+      [product_id]
     );
 
-    res.status(201).json({
-      success: true,
-      message: 'Ulasan berhasil dikirim! Terima kasih atas ulasan Anda.',
-      reviewId: result.insertId
-    });
+    if (products.length === 0) {
+      await connection.rollback();
+      sendNotFound(res, 'Produk tidak ditemukan.');
+      return;
+    }
+
+    const mitraId = products[0].mitra_id;
+
+    // 2. Simpan ulasan
+    const [result]: any = await connection.query(
+      `INSERT INTO reviews (product_id, user_id, order_item_id, rating, variant, comment, photo_urls)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        product_id,
+        userId,
+        order_item_id || null,
+        rating,
+        variant || null,
+        comment || null,
+        photo_urls ? JSON.stringify(photo_urls) : null,
+      ]
+    );
+
+    // 3. Update cache rating produk
+    const [prodStats]: any = await connection.query(
+      'SELECT COUNT(*) as total, AVG(rating) as avg_rating FROM reviews WHERE product_id = ?',
+      [product_id]
+    );
+    const prodTotal = prodStats[0]?.total || 0;
+    const prodAvg = prodStats[0]?.avg_rating ? Number(prodStats[0].avg_rating).toFixed(2) : 0;
+
+    await connection.query(
+      'UPDATE products SET rating = ?, total_reviews = ? WHERE id = ?',
+      [prodAvg, prodTotal, product_id]
+    );
+
+    // 4. Update cache rating toko mitra
+    const [mitraStats]: any = await connection.query(
+      `SELECT COUNT(r.id) as total, AVG(r.rating) as avg_rating 
+       FROM reviews r
+       JOIN products p ON r.product_id = p.id
+       WHERE p.mitra_id = ?`,
+      [mitraId]
+    );
+    const mitraTotal = mitraStats[0]?.total || 0;
+    const mitraAvg = mitraStats[0]?.avg_rating ? Number(mitraStats[0].avg_rating).toFixed(2) : 0;
+
+    await connection.query(
+      'UPDATE mitra_profiles SET rating = ?, total_reviews = ? WHERE id = ?',
+      [mitraAvg, mitraTotal, mitraId]
+    );
+
+    await connection.commit();
+
+    const [newReview]: any = await pool.query('SELECT * FROM reviews WHERE id = ?', [result.insertId]);
+    sendCreated(res, newReview[0], 'Ulasan berhasil dikirim. Terima kasih atas masukan Anda!');
   } catch (error) {
-    console.error('Error createReview:', error);
-    res.status(500).json({ success: false, message: 'Gagal mengirim ulasan' });
+    await connection.rollback();
+    console.error('❌ [createReview] Error:', error);
+    sendError(res, 'Gagal mengirim ulasan.');
+  } finally {
+    connection.release();
   }
 };
 
-export const markReviewHelpful = async (req: Request, res: Response): Promise<void> => {
+export const replyReview = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = res.locals['userId'];
+    const role = res.locals['role'];
+    const { id } = req.params;
+    const { seller_reply } = req.body;
+
+    const [reviewRows]: any = await pool.query(
+      `SELECT r.id, p.mitra_id, m.user_id AS mitra_user_id 
+       FROM reviews r
+       JOIN products p ON r.product_id = p.id
+       JOIN mitra_profiles m ON p.mitra_id = m.id
+       WHERE r.id = ?`,
+      [id]
+    );
+
+    if (reviewRows.length === 0) {
+      sendNotFound(res, 'Ulasan tidak ditemukan.');
+      return;
+    }
+
+    const review = reviewRows[0];
+    if (role !== 'admin' && review.mitra_user_id !== userId) {
+      sendForbidden(res, 'Hanya pemilik toko mitra yang boleh membalas ulasan ini.');
+      return;
+    }
+
+    await pool.query(
+      'UPDATE reviews SET seller_reply = ?, replied_at = NOW() WHERE id = ?',
+      [seller_reply, id]
+    );
+
+    sendSuccess(res, null, 'Balasan ulasan berhasil dikirim.');
+  } catch (error) {
+    console.error('❌ [replyReview] Error:', error);
+    sendError(res, 'Gagal membalas ulasan.');
+  }
+};
+
+export const voteHelpful = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     await pool.query('UPDATE reviews SET helpful_count = helpful_count + 1 WHERE id = ?', [id]);
-    res.status(200).json({ success: true, message: 'Ulasan ditandai bermanfaat' });
+    sendSuccess(res, null, 'Terima kasih atas tanggapan Anda.');
   } catch (error) {
-    console.error('Error markReviewHelpful:', error);
-    res.status(500).json({ success: false, message: 'Gagal menandai ulasan bermanfaat' });
+    console.error('❌ [voteHelpful] Error:', error);
+    sendError(res, 'Gagal memberikan vote.');
   }
 };
-

@@ -42,6 +42,7 @@ const adminController = __importStar(require("../controllers/adminController.js"
 const aiSettingController_js_1 = require("../controllers/aiSettingController.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const validatorMiddleware_js_1 = require("../middlewares/validatorMiddleware.js");
+const schemas_js_1 = require("../validators/schemas.js");
 const router = (0, express_1.Router)();
 /**
  * @route   GET /api/admin/dashboard-stats
@@ -74,7 +75,31 @@ router.get('/users', adminController.getAllUsers);
  * @desc    Mengaktifkan / menonaktifkan akun pengguna
  * @access  Admin only
  */
-router.patch('/users/:id/status', (0, validatorMiddleware_js_1.validateBody)([{ field: 'is_active', required: true, type: 'boolean' }]), adminController.updateUserStatus);
+router.patch('/users/:id/status', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.updateUserStatusSchema), adminController.updateUserStatus);
+/**
+ * @route   PATCH /api/admin/users/:id/force-logout
+ * @desc    Mengakhiri seluruh sesi pengguna di semua perangkat (token_version +1)
+ * @access  Admin only
+ */
+router.patch('/users/:id/force-logout', adminController.forceLogoutUser);
+/**
+ * @route   GET /api/admin/transactions
+ * @desc    Daftar seluruh transaksi lintas toko beserta status Midtrans & paid_at
+ * @access  Admin only
+ */
+router.get('/transactions', adminController.getAdminTransactions);
+/**
+ * @route   GET /api/admin/withdrawals?status=pending
+ * @desc    Daftar pengajuan tarik saldo mitra
+ * @access  Admin only
+ */
+router.get('/withdrawals', adminController.getWithdrawals);
+/**
+ * @route   PATCH /api/admin/withdrawals/:id
+ * @desc    Setujui / tolak pengajuan penarikan
+ * @access  Admin only
+ */
+router.patch('/withdrawals/:id', adminController.handleWithdrawalAction);
 /**
  * @route   GET /api/admin/master-data
  * @desc    Mendapatkan data master (opsional filter by category)
@@ -86,11 +111,7 @@ router.get('/master-data', adminController.getMasterData);
  * @desc    Membuat data master baru
  * @access  Admin only
  */
-router.post('/master-data', (0, validatorMiddleware_js_1.validateBody)([
-    { field: 'category', required: true, type: 'string', minLength: 1, maxLength: 50 },
-    { field: 'key', required: true, type: 'string', minLength: 1, maxLength: 100 },
-    { field: 'value', required: true, type: 'string', minLength: 1 },
-]), adminController.createMasterData);
+router.post('/master-data', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.createMasterDataSchema), adminController.createMasterData);
 /**
  * @route   GET /api/admin/verifikasi
  * @desc    Mendapatkan daftar pengajuan verifikasi toko mitra
@@ -102,6 +123,6 @@ router.get('/verifikasi', adminController.getVerifikasiList);
  * @desc    Setujui / tolak verifikasi toko mitra
  * @access  Admin only
  */
-router.patch('/verifikasi/:id', (0, validatorMiddleware_js_1.validateBody)([{ field: 'status', required: true, type: 'string' }]), adminController.verifyMitraStore);
+router.patch('/verifikasi/:id', (0, validatorMiddleware_js_1.validateZod)(schemas_js_1.verifyMitraStoreSchema), adminController.verifyMitraStore);
 exports.default = router;
 //# sourceMappingURL=adminRoutes.js.map

@@ -1,60 +1,93 @@
 "use strict";
+// ============================================================
+//  src/controllers/notificationController.ts
+//  Controller Pusat Notifikasi Pengguna & Mitra
+// ============================================================
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.markAllNotificationsRead = exports.markNotificationRead = exports.getNotifications = void 0;
+exports.getUnreadCount = exports.getNotifications = exports.deleteNotification = exports.markAllAsRead = exports.markAsRead = exports.getUnreadNotificationCount = exports.getUserNotifications = void 0;
 const database_js_1 = __importDefault(require("../config/database.js"));
-const getNotifications = async (req, res) => {
+const response_js_1 = require("../utils/response.js");
+const getUserNotifications = async (_req, res) => {
     try {
-        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
-        if (!userId) {
-            res.status(401).json({ success: false, message: 'Unauthorized' });
+        const userId = res.locals['userId'];
+        const [rows] = await database_js_1.default.query(`SELECT id, title, message, type, reference_id, is_read, created_at 
+       FROM notifications 
+       WHERE user_id = ? 
+       ORDER BY id DESC LIMIT 50`, [userId]);
+        const [unreadRows] = await database_js_1.default.query('SELECT COUNT(*) as unread_count FROM notifications WHERE user_id = ? AND is_read = 0', [userId]);
+        (0, response_js_1.sendSuccess)(res, {
+            unread_count: unreadRows[0]?.unread_count || 0,
+            notifications: rows,
+        }, 'Daftar notifikasi berhasil diambil.');
+    }
+    catch (error) {
+        console.error('❌ [getUserNotifications] Error:', error);
+        (0, response_js_1.sendError)(res, 'Gagal mengambil notifikasi.');
+    }
+};
+exports.getUserNotifications = getUserNotifications;
+const getUnreadNotificationCount = async (_req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        const [unreadRows] = await database_js_1.default.query('SELECT COUNT(*) as unread_count FROM notifications WHERE user_id = ? AND is_read = 0', [userId]);
+        (0, response_js_1.sendSuccess)(res, { unread_count: unreadRows[0]?.unread_count || 0 }, 'Jumlah notifikasi belum dibaca.');
+    }
+    catch (error) {
+        console.error('❌ [getUnreadNotificationCount] Error:', error);
+        (0, response_js_1.sendError)(res, 'Gagal mengambil jumlah notifikasi.');
+    }
+};
+exports.getUnreadNotificationCount = getUnreadNotificationCount;
+const markAsRead = async (req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        const { id } = req.params;
+        const [result] = await database_js_1.default.query('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', [id, userId]);
+        if (result.affectedRows === 0) {
+            (0, response_js_1.sendNotFound)(res, 'Notifikasi tidak ditemukan.');
             return;
         }
-        const [rows] = await database_js_1.default.query(`SELECT id, user_id, title, body, type, data, is_read, created_at
-       FROM notifications
-       WHERE user_id = ?
-       ORDER BY created_at DESC
-       LIMIT 50`, [userId]).catch(() => [[]]);
-        const unreadCount = rows.filter((r) => !r.is_read).length;
-        res.status(200).json({
-            success: true,
-            data: {
-                unread_count: unreadCount,
-                notifications: rows
-            }
-        });
+        (0, response_js_1.sendSuccess)(res, null, 'Notifikasi ditandai sudah dibaca.');
     }
     catch (error) {
-        console.error('Error getNotifications:', error);
-        res.status(500).json({ success: false, message: 'Gagal mengambil notifikasi' });
+        console.error('❌ [markAsRead] Error:', error);
+        (0, response_js_1.sendError)(res, 'Gagal memperbarui status notifikasi.');
     }
 };
-exports.getNotifications = getNotifications;
-const markNotificationRead = async (req, res) => {
+exports.markAsRead = markAsRead;
+const markAllAsRead = async (_req, res) => {
     try {
-        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
-        const { id } = req.params;
-        await database_js_1.default.query('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', [id, userId]);
-        res.status(200).json({ success: true, message: 'Notifikasi ditandai telah dibaca' });
-    }
-    catch (error) {
-        console.error('Error markNotificationRead:', error);
-        res.status(500).json({ success: false, message: 'Gagal memperbarui notifikasi' });
-    }
-};
-exports.markNotificationRead = markNotificationRead;
-const markAllNotificationsRead = async (req, res) => {
-    try {
-        const userId = req.user?.id || req.user?.userId || res.locals['userId'];
+        const userId = res.locals['userId'];
         await database_js_1.default.query('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [userId]);
-        res.status(200).json({ success: true, message: 'Semua notifikasi ditandai telah dibaca' });
+        (0, response_js_1.sendSuccess)(res, null, 'Semua notifikasi ditandai sudah dibaca.');
     }
     catch (error) {
-        console.error('Error markAllNotificationsRead:', error);
-        res.status(500).json({ success: false, message: 'Gagal memperbarui notifikasi' });
+        console.error('❌ [markAllAsRead] Error:', error);
+        (0, response_js_1.sendError)(res, 'Gagal memperbarui notifikasi.');
     }
 };
-exports.markAllNotificationsRead = markAllNotificationsRead;
+exports.markAllAsRead = markAllAsRead;
+const deleteNotification = async (req, res) => {
+    try {
+        const userId = res.locals['userId'];
+        const { id } = req.params;
+        const [result] = await database_js_1.default.query('DELETE FROM notifications WHERE id = ? AND user_id = ?', [id, userId]);
+        if (result.affectedRows === 0) {
+            (0, response_js_1.sendNotFound)(res, 'Notifikasi tidak ditemukan.');
+            return;
+        }
+        (0, response_js_1.sendSuccess)(res, null, 'Notifikasi berhasil dihapus.');
+    }
+    catch (error) {
+        console.error('❌ [deleteNotification] Error:', error);
+        (0, response_js_1.sendError)(res, 'Gagal menghapus notifikasi.');
+    }
+};
+exports.deleteNotification = deleteNotification;
+// Aliases
+exports.getNotifications = exports.getUserNotifications;
+exports.getUnreadCount = exports.getUnreadNotificationCount;
 //# sourceMappingURL=notificationController.js.map
