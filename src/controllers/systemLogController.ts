@@ -107,6 +107,21 @@ const buildLogFilterWhere = (query: Record<string, any>): FilterQueryResult => {
     }
   }
 
+  // Filter Outcome (success | failure | pending | info)
+  if (query.outcome && query.outcome !== 'all') {
+    const outcomes = String(query.outcome)
+      .split(',')
+      .map((o) => o.trim().toLowerCase())
+      .filter(Boolean);
+    if (outcomes.length === 1) {
+      conditions.push('outcome = ?');
+      params.push(outcomes[0]);
+    } else if (outcomes.length > 1) {
+      conditions.push(`outcome IN (${outcomes.map(() => '?').join(',')})`);
+      params.push(...outcomes);
+    }
+  }
+
   // Filter HTTP Status / Group (§7, §8.2)
   if (query.statusCode && query.statusCode !== 'all') {
     const st = String(query.statusCode).trim().toLowerCase();

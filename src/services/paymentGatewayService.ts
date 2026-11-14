@@ -1025,6 +1025,7 @@ export async function checkAndSyncOrderPayment(
 
   return {
     order_id: active.order.id,
+    transaction_id: active.trx.id,
     reference_code: active.referenceCode,
     gateway: active.trx.gateway || 'midtrans',
     gateway_order_id: active.trx.gateway_order_id,
@@ -1094,7 +1095,13 @@ export async function cancelOrderPayment(
     throw Object.assign(new Error('Pesanan sudah dibayar dan tidak dapat dibatalkan.'), { status: 400 });
   }
   if (ctx.order.status === 'cancelled' || ctx.trx.status === 'cancelled') {
-    return { order_id: orderId, payment_status: 'cancelled', order_status: 'cancelled' };
+    return {
+      order_id: orderId,
+      transaction_id: ctx.trx.id,
+      reference_code: ctx.referenceCode,
+      payment_status: 'cancelled',
+      order_status: 'cancelled',
+    };
   }
 
   await cancelRemoteChargeIfAny(ctx.trx.gateway_order_id);
@@ -1113,6 +1120,8 @@ export async function cancelOrderPayment(
 
   return {
     order_id: orderId,
+    transaction_id: ctx.trx.id,
+    reference_code: ctx.referenceCode,
     payment_status: 'cancelled',
     order_status: 'cancelled',
   };
@@ -1157,6 +1166,8 @@ export async function simulateOrderPaid(
 
   return {
     order_id: orderId,
+    transaction_id: ctx.trx.id,
+    reference_code: ctx.referenceCode,
     payment_status: 'paid',
     order_status: 'paid',
     settled_now: settled,

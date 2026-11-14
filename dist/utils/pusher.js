@@ -4,11 +4,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pusher = void 0;
+require("dotenv/config");
 const pusher_1 = __importDefault(require("pusher"));
 exports.pusher = new pusher_1.default({
     appId: (process.env.PUSHER_APP_ID || '').trim(),
-    key: (process.env.PUSHER_KEY || '').trim(),
-    secret: (process.env.PUSHER_SECRET || '').trim(),
+    key: (process.env.PUSHER_KEY || process.env.PUSHER_APP_KEY || '').trim(),
+    secret: (process.env.PUSHER_SECRET || process.env.PUSHER_APP_SECRET || '').trim(),
     cluster: (process.env.PUSHER_CLUSTER || 'ap1').trim(),
     useTLS: true,
 });

@@ -33,9 +33,12 @@ app.use((0, cors_1.default)({
 // 1b. Request ID / Correlation ID Middleware (§10.1)
 app.use(auditMiddleware_js_1.requestIdMiddleware);
 // 2. Keamanan — Helmet & Rate Limiter
+const isProd = process.env['NODE_ENV'] === 'production';
 app.use((0, helmet_1.default)({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginEmbedderPolicy: false,
+    hsts: isProd ? undefined : false,
+    contentSecurityPolicy: isProd ? undefined : false,
 }));
 exports.apiLimiter = (0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000,

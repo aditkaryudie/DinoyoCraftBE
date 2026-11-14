@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import Pusher from 'pusher';
 export declare const pusher: Pusher;
 export default pusher;

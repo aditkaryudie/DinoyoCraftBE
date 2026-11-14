@@ -127,6 +127,24 @@ const checkout = async (req, res) => {
             orderId,
         ]);
         await connection.commit();
+        res.locals['logCategory'] = 'transaction';
+        res.locals['logEventName'] = 'transaction.checkout.pending';
+        res.locals['logSeverity'] = 'info';
+        res.locals['logOutcome'] = 'pending';
+        res.locals['orderId'] = orderId;
+        res.locals['transactionId'] = transactionId;
+        res.locals['referenceCode'] = refCode;
+        res.locals['logMessage'] = `Checkout pesanan #${orderId} dibuat — menunggu pembayaran (Ref: ${refCode}, Total Rp ${(grandTotal + platformFee).toLocaleString('id-ID')})`;
+        res.locals['logMetadata'] = {
+            orderStatus: 'pending',
+            paymentStatus: 'pending',
+            paymentMethod: payment_method,
+            shippingMethod: shipping_method,
+            totalAmount: grandTotal,
+            platformFee,
+            totalDue: grandTotal + platformFee,
+            expiryTime: (0, paymentGatewayService_js_1.toIsoWibString)(deadline),
+        };
         (0, response_js_1.sendCreated)(res, {
             order_id: orderId,
             reference_code: refCode,

@@ -4,18 +4,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.markConversationAsRead = exports.getUnreadChatCount = exports.getChatContacts = exports.getChatHistory = exports.getMessages = exports.sendMessage = void 0;
-const pusher_1 = __importDefault(require("pusher"));
 const database_js_1 = __importDefault(require("../config/database.js"));
+const pusher_js_1 = __importDefault(require("../utils/pusher.js"));
 const encryption_js_1 = require("../utils/encryption.js");
 const notificationService_js_1 = require("../services/notificationService.js");
-// Inisialisasi Pusher Server SDK
-const pusher = new pusher_1.default({
-    appId: process.env.PUSHER_APP_ID,
-    key: process.env.PUSHER_APP_KEY,
-    secret: process.env.PUSHER_APP_SECRET,
-    cluster: 'mt1', // <-- Ganti dengan hasil intipan dari Flutter
-    useTLS: true
-});
 /**
  * Mengirim pesan baru dan mentrigger event real-time ke Pusher
  * POST /api/chat/send/:targetUserId
@@ -60,7 +52,7 @@ const sendMessage = async (req, res) => {
         const userSenderChannel = `user-${numericSenderId}`;
         console.log(`[Pusher Backend] Triggering event 'new-message' on channels:`, [channelName, userTargetChannel, userSenderChannel]);
         try {
-            await pusher.trigger([channelName, userTargetChannel, userSenderChannel], 'new-message', {
+            await pusher_js_1.default.trigger([channelName, userTargetChannel, userSenderChannel], 'new-message', {
                 id: Number(newMessage.id),
                 sender_id: numericSenderId,
                 receiver_id: numericTargetId,
@@ -165,7 +157,15 @@ const getChatContacts = async (req, res) => {
         u.name, 
         u.email, 
         u.role, 
-        u.avatar_url,
+        CASE
+          WHEN mp.id IS NOT NULL OR u.role = 'mitra' THEN
+            CASE
+              WHEN mp.avatar_url IS NOT NULL AND mp.avatar_url != '' AND mp.avatar_url NOT LIKE '%googleusercontent.com%' AND mp.avatar_url NOT LIKE '%google.com%' THEN mp.avatar_url
+              WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+              ELSE NULL
+            END
+          ELSE u.avatar_url
+        END AS avatar_url,
         mp.store_name,
         (
           SELECT m.message FROM messages m 

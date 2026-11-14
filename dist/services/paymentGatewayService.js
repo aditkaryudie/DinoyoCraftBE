@@ -824,6 +824,7 @@ async function checkAndSyncOrderPayment(userId, role, orderId) {
     const active = latestCtx ?? ctx;
     return {
         order_id: active.order.id,
+        transaction_id: active.trx.id,
         reference_code: active.referenceCode,
         gateway: active.trx.gateway || 'midtrans',
         gateway_order_id: active.trx.gateway_order_id,
@@ -879,7 +880,13 @@ async function cancelOrderPayment(userId, role, orderId, reason = 'Dibatalkan ol
         throw Object.assign(new Error('Pesanan sudah dibayar dan tidak dapat dibatalkan.'), { status: 400 });
     }
     if (ctx.order.status === 'cancelled' || ctx.trx.status === 'cancelled') {
-        return { order_id: orderId, payment_status: 'cancelled', order_status: 'cancelled' };
+        return {
+            order_id: orderId,
+            transaction_id: ctx.trx.id,
+            reference_code: ctx.referenceCode,
+            payment_status: 'cancelled',
+            order_status: 'cancelled',
+        };
     }
     await cancelRemoteChargeIfAny(ctx.trx.gateway_order_id);
     await (0, orderExpiry_js_1.cancelOrExpireOrderPayment)({
@@ -892,6 +899,8 @@ async function cancelOrderPayment(userId, role, orderId, reason = 'Dibatalkan ol
     }, 'cancelled', { reason });
     return {
         order_id: orderId,
+        transaction_id: ctx.trx.id,
+        reference_code: ctx.referenceCode,
         payment_status: 'cancelled',
         order_status: 'cancelled',
     };
@@ -921,6 +930,8 @@ async function simulateOrderPaid(userId, role, orderId) {
     await database_js_1.default.query('UPDATE transactions SET paid_at = COALESCE(paid_at, NOW()), gateway_response = COALESCE(gateway_response, ?) WHERE id = ?', [JSON.stringify({ simulated: true, sandbox: true }), ctx.trx.id]);
     return {
         order_id: orderId,
+        transaction_id: ctx.trx.id,
+        reference_code: ctx.referenceCode,
         payment_status: 'paid',
         order_status: 'paid',
         settled_now: settled,

@@ -14,17 +14,20 @@ const nodemailer_1 = __importDefault(require("nodemailer"));
  * Membuat transporter Gmail SMTP secara dinamis dari environment variables
  */
 const getTransporter = () => {
-    const user = process.env['EMAIL_USER'];
-    const pass = process.env['EMAIL_PASS'];
+    const user = (process.env['EMAIL_USER'] || '').trim();
+    const pass = (process.env['EMAIL_PASS'] || '').trim();
     if (!user || !pass) {
         console.error('⚠️ [EMAIL CONFIG] EMAIL_USER atau EMAIL_PASS belum terdefinisi di .env!');
     }
     return nodemailer_1.default.createTransport({
         service: 'gmail',
         auth: {
-            user: user || '',
-            pass: pass || '',
+            user,
+            pass,
         },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000,
     });
 };
 exports.getTransporter = getTransporter;

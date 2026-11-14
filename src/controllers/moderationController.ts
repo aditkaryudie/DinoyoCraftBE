@@ -7,75 +7,58 @@ import { Request, Response } from 'express';
 import pool from '../config/database.js';
 
 let tablesInitialized = false;
+let initTablesPromise: Promise<void> | null = null;
 
 /**
- * Memastikan tabel reports dan account_deletions tersedia di database
+ * Memastikan tabel reports dan account_deletions tersedia di database (tanpa mock data)
  */
 const ensureModerationTables = async (): Promise<void> => {
   if (tablesInitialized) return;
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS \`reports\` (
-        \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-        \`reporter_id\` int UNSIGNED DEFAULT NULL,
-        \`reporter_name\` varchar(150) NOT NULL,
-        \`type\` varchar(50) NOT NULL,
-        \`target_id\` int UNSIGNED DEFAULT NULL,
-        \`target_name\` varchar(255) NOT NULL,
-        \`reason\` text NOT NULL,
-        \`status\` varchar(50) NOT NULL DEFAULT 'pending',
-        \`resolved_at\` datetime DEFAULT NULL,
-        \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (\`id\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
+  if (initTablesPromise) return initTablesPromise;
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS \`account_deletions\` (
-        \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-        \`user_id\` int UNSIGNED DEFAULT NULL,
-        \`name\` varchar(100) NOT NULL,
-        \`email\` varchar(255) NOT NULL,
-        \`reason\` text NOT NULL,
-        \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
-        \`resolved_at\` datetime DEFAULT NULL,
-        \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (\`id\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    // Cek apakah tabel reports masih kosong, jika ya isi sampel awal
-    const [reportCount]: any = await pool.query('SELECT COUNT(*) as total FROM reports');
-    if (reportCount[0]?.total === 0) {
+  initTablesPromise = (async () => {
+    try {
       await pool.query(`
-        INSERT INTO \`reports\` (\`id\`, \`type\`, \`target_name\`, \`reporter_name\`, \`reason\`, \`status\`, \`created_at\`) VALUES
-        (1, 'toko', 'Tanah Liat Art', 'Budi Santoso', 'Melanggar ketentuan harga (price dumping)', 'pending', DATE_SUB(NOW(), INTERVAL 2 DAY)),
-        (2, 'ulasan', 'Review oleh User123 di Mug Daun', 'Siti Rahayu', 'Ulasan mengandung kata kasar', 'pending', DATE_SUB(NOW(), INTERVAL 3 DAY)),
-        (3, 'produk', 'Asbak Bentuk Tangan (Studio Bumi)', 'Joko Santoso', 'Gambar tidak sesuai produk asli', 'pending', DATE_SUB(NOW(), INTERVAL 4 DAY)),
-        (4, 'toko', 'Keramik Murah Meriah', 'Dewi Kartika', 'Foto produk menggunakan gambar curian', 'pending', DATE_SUB(NOW(), INTERVAL 6 DAY)),
-        (5, 'ulasan', 'Review di Piring Hias (Keramik Rina)', 'Ahmad Fauzi', 'Ulasan palsu & tidak relevan', 'resolved', DATE_SUB(NOW(), INTERVAL 8 DAY));
+        CREATE TABLE IF NOT EXISTS \`reports\` (
+          \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+          \`reporter_id\` int UNSIGNED DEFAULT NULL,
+          \`reporter_name\` varchar(150) NOT NULL,
+          \`type\` varchar(50) NOT NULL,
+          \`target_id\` int UNSIGNED DEFAULT NULL,
+          \`target_name\` varchar(255) NOT NULL,
+          \`reason\` text NOT NULL,
+          \`status\` varchar(50) NOT NULL DEFAULT 'pending',
+          \`resolved_at\` datetime DEFAULT NULL,
+          \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (\`id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
-    }
 
-    // Cek apakah tabel account_deletions masih kosong, jika ya isi sampel awal
-    const [delCount]: any = await pool.query('SELECT COUNT(*) as total FROM account_deletions');
-    if (delCount[0]?.total === 0) {
       await pool.query(`
-        INSERT INTO \`account_deletions\` (\`id\`, \`name\`, \`email\`, \`reason\`, \`status\`, \`created_at\`) VALUES
-        (1, 'Rina Kusuma', 'rina.k@gmail.com', 'Tidak ingin menggunakan platform lagi', 'pending', DATE_SUB(NOW(), INTERVAL 1 DAY)),
-        (2, 'Denny Prasetyo', 'denny.p@yahoo.com', 'Pindah ke platform lain', 'pending', DATE_SUB(NOW(), INTERVAL 2 DAY)),
-        (3, 'Mega Wulandari', 'mega.w@gmail.com', 'Privasi data — ingin semua data dihapus', 'approved', DATE_SUB(NOW(), INTERVAL 4 DAY)),
-        (4, 'Farhan Aziz', 'farhan.a@email.com', 'Akun duplikat, sudah punya akun lain', 'rejected', DATE_SUB(NOW(), INTERVAL 6 DAY)),
-        (5, 'Laila Novita', 'laila.n@gmail.com', 'Sudah tidak aktif bertransaksi', 'pending', DATE_SUB(NOW(), INTERVAL 7 DAY));
+        CREATE TABLE IF NOT EXISTS \`account_deletions\` (
+          \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
+          \`user_id\` int UNSIGNED DEFAULT NULL,
+          \`name\` varchar(100) NOT NULL,
+          \`email\` varchar(255) NOT NULL,
+          \`reason\` text NOT NULL,
+          \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+          \`resolved_at\` datetime DEFAULT NULL,
+          \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (\`id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
-    }
 
-    tablesInitialized = true;
-  } catch (err) {
-    console.warn('⚠️ [ensureModerationTables] Inisialisasi tabel:', err);
-  }
+      tablesInitialized = true;
+    } catch (err) {
+      console.warn('⚠️ [ensureModerationTables] Inisialisasi tabel:', err);
+    } finally {
+      initTablesPromise = null;
+    }
+  })();
+
+  return initTablesPromise;
 };
 
 /**

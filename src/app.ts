@@ -35,10 +35,13 @@ app.use(
 app.use(requestIdMiddleware);
 
 // 2. Keamanan — Helmet & Rate Limiter
+const isProd = process.env['NODE_ENV'] === 'production';
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginEmbedderPolicy: false,
+    hsts: isProd ? undefined : false,
+    contentSecurityPolicy: isProd ? undefined : false,
   })
 );
 

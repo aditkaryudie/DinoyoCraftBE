@@ -321,11 +321,104 @@ export const ensureSystemLogsSchema = async (): Promise<void> => {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
+  // Bersihkan sisa demo/log legacy SociaBuzz (scbz) dan fake seed error SMTP agar tidak membingungkan
+  await pool.query(`
+    DELETE FROM system_logs
+    WHERE request_id = 'req_demo_ext_01'
+       OR LOWER(COALESCE(route_template, '')) LIKE '%sociabuzz%'
+       OR LOWER(COALESCE(user_agent, '')) LIKE '%sociabuzz%'
+       OR LOWER(COALESCE(error_message, '')) LIKE '%x-callback-token%'
+       OR LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.gateway')), '')) LIKE '%sociabuzz%'
+       OR LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.gateway')), '')) LIKE '%scbz%'
+  `);
+
+  // Mutakhirkan seed transaksi pending demo lama agar akurat merepresentasikan status pending pembayaran
+  await pool.query(`
+    UPDATE system_logs
+    SET event_name = 'transaction.payment.pending',
+        severity = 'info',
+        outcome = 'pending',
+        message = 'Tagihan QRIS Dinamis Midtrans Sandbox dibuat untuk pesanan #8 — menunggu pembayaran (PENDING, Ref: TRX-2026-0008)',
+        metadata_json = JSON_SET(COALESCE(metadata_json, JSON_OBJECT()), '$.paymentStatus', 'pending')
+    WHERE request_id = 'req_demo_trx_02'
+      AND event_name = 'transaction.qris.generated'
+  `);
+
   // Seed data awal yang representatif jika tabel masih kosong agar Admin langsung dapat menguji seluruh filter & korelasi
   const [countRows]: any = await pool.query('SELECT COUNT(*) AS total FROM system_logs');
   const total = Number(countRows?.[0]?.total || 0);
   if (total === 0) {
     await seedInitialSystemLogs();
+  }
+
+  // Catat log pending untuk transaksi/pesanan yang saat ini masih belum dibayar agar langsung terlihat di System Logs
+  try {
+    const [pendingRows]: any = await pool.query(`
+      SELECT
+        t.id AS transaction_id,
+        o.id AS order_id,
+        t.user_id,
+        t.transaction_type,
+        t.amount,
+        t.gateway_fee,
+        t.reference_code,
+        t.gateway,
+        t.gateway_order_id,
+        t.created_at,
+        t.expiry_time
+      FROM transactions t
+      INNER JOIN orders o ON o.transaction_id = t.id
+      WHERE t.status = 'pending'
+        AND o.status = 'pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM system_logs sl
+          WHERE sl.transaction_id = t.id
+            AND sl.outcome = 'pending'
+            AND sl.deleted_at IS NULL
+        )
+      ORDER BY t.id DESC
+      LIMIT 50
+    `);
+
+    for (const row of pendingRows || []) {
+      const totalPay = Number(row.amount || 0) + Number(row.gateway_fee || 0);
+      const methodLabel = String(row.transaction_type || 'payment').toUpperCase();
+      logSystemEvent({
+        occurredAt: row.created_at ? new Date(row.created_at) : new Date(),
+        category: 'transaction',
+        eventName: 'transaction.payment.pending',
+        severity: 'info',
+        outcome: 'pending',
+        message: `Pembayaran ${methodLabel} pesanan #${row.order_id} berstatus pending (belum dibayar, Ref: ${row.reference_code || '-'}, Total Rp ${totalPay.toLocaleString('id-ID')})`,
+        source: 'backend',
+        service: 'payment-gateway',
+        http: {
+          method: 'POST',
+          route: '/api/payments/create',
+          statusCode: 200,
+          durationMs: 0,
+        },
+        correlation: {
+          requestId: `pending_trx_${row.transaction_id}`,
+          userId: row.user_id ? Number(row.user_id) : null,
+          role: 'pengunjung',
+          orderId: Number(row.order_id),
+          transactionId: Number(row.transaction_id),
+          referenceCode: row.reference_code ? String(row.reference_code) : null,
+        },
+        metadata: {
+          gateway: row.gateway || 'midtrans',
+          gatewayOrderId: row.gateway_order_id || null,
+          paymentMethod: row.transaction_type || null,
+          paymentStatus: 'pending',
+          orderStatus: 'pending',
+          totalPay,
+          expiryTime: row.expiry_time ? new Date(row.expiry_time).toISOString() : null,
+        },
+      });
+    }
+  } catch {
+    // Abaikan jika tabel orders/transactions belum tersedia pada inisialisasi awal
   }
 };
 
@@ -382,16 +475,16 @@ const seedInitialSystemLogs = async (): Promise<void> => {
     {
       offsetMs: -7 * min,
       category: 'transaction',
-      eventName: 'transaction.qris.generated',
-      severity: 'success',
-      outcome: 'success',
-      message: 'QRIS Dinamis berhasil dibuat untuk pesanan #8 (Ref: TRX-2026-0008)',
+      eventName: 'transaction.payment.pending',
+      severity: 'info',
+      outcome: 'pending',
+      message: 'Tagihan QRIS Dinamis Midtrans Sandbox dibuat untuk pesanan #8 — menunggu pembayaran (PENDING, Ref: TRX-2026-0008)',
       source: 'backend',
       service: 'payment-gateway',
       http: { method: 'POST', route: '/api/payments/create', statusCode: 200, durationMs: 312 },
       correlation: { requestId: 'req_demo_trx_02', traceId: 'trc_order_8', userId: 40, role: 'pengunjung', orderId: 8, transactionId: 8, referenceCode: 'TRX-2026-0008' },
       client: { platform: 'Mobile Android', appVersion: '1.0.0', ipMasked: '10.0.2.***' },
-      metadata: { gateway: 'SociaBuzz QRIS', totalPay: 40366 },
+      metadata: { gateway: 'midtrans', paymentType: 'qris', paymentStatus: 'pending', isProduction: false, totalPay: 40366 },
     },
     {
       offsetMs: -6 * min,
@@ -399,20 +492,20 @@ const seedInitialSystemLogs = async (): Promise<void> => {
       eventName: 'transaction.webhook.signature_mismatch',
       severity: 'critical',
       outcome: 'failure',
-      message: 'CRITICAL: Signature webhook pembayaran tidak valid pada percobaan callback eksternal',
+      message: 'CRITICAL: Signature webhook Midtrans Sandbox tidak valid pada percobaan callback eksternal',
       source: 'external',
       service: 'payment-webhook',
-      http: { method: 'POST', route: '/api/payments/webhook/sociabuzz', statusCode: 500, durationMs: 29 },
+      http: { method: 'POST', route: '/api/payments/webhook', statusCode: 403, durationMs: 29 },
       correlation: { requestId: 'req_demo_Hook_99', orderId: 7, transactionId: 7, referenceCode: 'TRX-2026-0007' },
-      client: { platform: 'Webhook', ipMasked: '103.28.14.***', userAgent: 'SociaBuzz-Webhook/1.0' },
+      client: { platform: 'Webhook', ipMasked: '103.28.14.***', userAgent: 'Midtrans-Webhook/1.0' },
       error: {
         code: 'WEBHOOK_SIGNATURE_INVALID',
         name: 'PaymentSecurityError',
-        message: 'Signature header X-Callback-Token tidak cocok dengan WEBHOOK_SECRET.',
-        stack: 'PaymentSecurityError: Signature header X-Callback-Token tidak cocok\n    at verifyWebhookSignature (src/controllers/paymentController.ts:44:15)\n    at handlePaymentWebhook (src/controllers/paymentController.ts:92:7)',
-        providerCode: 'SB_403_SIG',
+        message: 'Signature SHA-512 signature_key tidak cocok dengan Midtrans Server Key / Signature Key.',
+        stack: 'PaymentSecurityError: Signature notifikasi Midtrans tidak valid.\n    at verifySignatureKey (src/services/midtransService.ts:123:17)\n    at handleWebhook (src/controllers/paymentController.ts:136:28)',
+        providerCode: 'MIDTRANS_403_SIG',
       },
-      metadata: { gateway: 'sociabuzz', verification: 'rejected' },
+      metadata: { gateway: 'midtrans', verification: 'rejected', isProduction: false },
     },
     {
       offsetMs: -4 * min,
@@ -496,22 +589,15 @@ const seedInitialSystemLogs = async (): Promise<void> => {
     {
       offsetMs: -9 * min,
       category: 'external',
-      eventName: 'external.smtp.delivery_failed',
-      severity: 'error',
-      outcome: 'failure',
-      message: 'Gagal mengirim email notifikasi OTP: Connection timeout ke сервер SMTP',
+      eventName: 'external.smtp.delivered',
+      severity: 'success',
+      outcome: 'success',
+      message: 'Email notifikasi OTP berhasil dikirim melalui Gmail SMTP',
       source: 'external',
       service: 'nodemailer-smtp',
-      http: { method: 'POST', route: '/api/auth/forgot-password', statusCode: 500, durationMs: 3012 },
+      http: { method: 'POST', route: '/api/auth/forgot-password', statusCode: 200, durationMs: 820 },
       correlation: { requestId: 'req_demo_ext_01' },
-      error: {
-        code: 'ETIMEDOUT',
-        name: 'SmtpConnectionError',
-        message: 'Connection timeout while connecting to smtp.gmail.com:587',
-        stack: 'SmtpConnectionError: Connection timeout while connecting to smtp.gmail.com:587\n    at sendOtpEmail (src/utils/emailService.ts:62:11)',
-        providerCode: 'SMTP_554',
-      },
-      metadata: { provider: 'gmail-smtp', retryScheduled: true },
+      metadata: { provider: 'gmail-smtp' },
     },
     {
       offsetMs: -12 * min,
@@ -715,17 +801,21 @@ export const logHttpRequest = (
   const routeTemplate = normalizeRouteTemplate(cleanPath);
   const category = (res.locals['logCategory'] as LogCategory) || classifyRouteCategory(routeTemplate);
 
-  let severity: LogSeverity = 'success';
-  let outcome: LogOutcome = 'success';
+  let severity: LogSeverity = (res.locals['logSeverity'] as LogSeverity) || 'success';
+  let outcome: LogOutcome = (res.locals['logOutcome'] as LogOutcome) || 'success';
   if (statusCode >= 500) {
-    severity = res.locals['isCriticalError'] ? 'critical' : 'error';
-    outcome = 'failure';
+    severity = res.locals['isCriticalError']
+      ? 'critical'
+      : (res.locals['logSeverity'] as LogSeverity) || 'error';
+    outcome = (res.locals['logOutcome'] as LogOutcome) || 'failure';
   } else if (statusCode >= 400) {
-    severity = 'warning';
-    outcome = 'failure';
+    severity = res.locals['isCriticalError']
+      ? 'critical'
+      : (res.locals['logSeverity'] as LogSeverity) || 'warning';
+    outcome = (res.locals['logOutcome'] as LogOutcome) || 'failure';
   } else if (statusCode >= 300) {
-    severity = 'info';
-    outcome = 'info';
+    severity = (res.locals['logSeverity'] as LogSeverity) || 'info';
+    outcome = (res.locals['logOutcome'] as LogOutcome) || 'info';
   }
 
   const userId =
@@ -769,8 +859,8 @@ export const logHttpRequest = (
     severity,
     outcome,
     message: customMessage || defaultMessage,
-    source: 'backend',
-    service: 'api',
+    source: (res.locals['logSource'] as LogSource) || 'backend',
+    service: (res.locals['logService'] as string) || 'api',
     http: {
       method: req.method,
       route: routeTemplate,

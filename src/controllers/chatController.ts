@@ -1,17 +1,8 @@
 import { Request, Response } from 'express';
-import Pusher from 'pusher';
 import pool from '../config/database.js';
+import pusher from '../utils/pusher.js';
 import { encryptMessage, decryptMessage } from '../utils/encryption.js';
 import { sendPushNotificationToUser } from '../services/notificationService.js';
-
-// Inisialisasi Pusher Server SDK
-const pusher = new Pusher({
-  appId: process.env.PUSHER_APP_ID!,
-  key: process.env.PUSHER_APP_KEY!,
-  secret: process.env.PUSHER_APP_SECRET!,
-  cluster: 'mt1', // <-- Ganti dengan hasil intipan dari Flutter
-  useTLS: true
-});
 
 /**
  * Mengirim pesan baru dan mentrigger event real-time ke Pusher
@@ -202,7 +193,15 @@ export const getChatContacts = async (req: Request, res: Response): Promise<void
         u.name, 
         u.email, 
         u.role, 
-        u.avatar_url,
+        CASE
+          WHEN mp.id IS NOT NULL OR u.role = 'mitra' THEN
+            CASE
+              WHEN mp.avatar_url IS NOT NULL AND mp.avatar_url != '' AND mp.avatar_url NOT LIKE '%googleusercontent.com%' AND mp.avatar_url NOT LIKE '%google.com%' THEN mp.avatar_url
+              WHEN u.avatar_url IS NOT NULL AND u.avatar_url != '' AND u.avatar_url NOT LIKE '%googleusercontent.com%' AND u.avatar_url NOT LIKE '%google.com%' THEN u.avatar_url
+              ELSE NULL
+            END
+          ELSE u.avatar_url
+        END AS avatar_url,
         mp.store_name,
         (
           SELECT m.message FROM messages m 
