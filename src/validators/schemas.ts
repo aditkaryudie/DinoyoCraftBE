@@ -195,7 +195,8 @@ export const updateProductSchema = z.object({
 // 7. Skema Live Chat (Messages)
 // ============================================================
 export const sendMessageSchema = z.object({
-  message: z.string().min(1, 'Pesan tidak boleh kosong').max(2000, 'Pesan maksimal 2000 karakter'),
+  message: z.string().max(2000, 'Pesan maksimal 2000 karakter').optional().nullable(),
+  image_url: z.string().optional().nullable(),
 });
 
 // ============================================================

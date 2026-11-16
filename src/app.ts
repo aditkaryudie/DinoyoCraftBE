@@ -98,6 +98,9 @@ app.get(['/health', '/api/health'], (_req: Request, res: Response) => {
 const targetFolder = path.join(process.cwd(), 'uploads');
 console.log('📂 Static Server membaca dari:', targetFolder);
 app.use('/uploads', express.static(targetFolder));
+app.use('/api/uploads', express.static(targetFolder));
+app.use('/assets/stickers', express.static(path.join(targetFolder, 'stickers')));
+app.use('/stickers', express.static(path.join(targetFolder, 'stickers')));
 
 // -------------------------------------------------------
 // 7. Router Utama

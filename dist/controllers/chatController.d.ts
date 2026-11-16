@@ -1,7 +1,11 @@
 import { Request, Response } from 'express';
 /**
+ * Memperbarui timestamp aktivitas terakhir user di database (last_seen_at)
+ */
+export declare const touchUserActivity: (userId: number) => Promise<void>;
+/**
  * Mengirim pesan baru dan mentrigger event real-time ke Pusher
- * POST /api/chat/send/:targetUserId
+ * POST /api/chat/send/:targetUserId atau POST /api/chat/send
  */
 export declare const sendMessage: (req: Request, res: Response) => Promise<void>;
 /**
@@ -25,4 +29,9 @@ export declare const getUnreadChatCount: (req: Request, res: Response) => Promis
  * PATCH /api/chat/messages/:targetUserId/read
  */
 export declare const markConversationAsRead: (req: Request, res: Response) => Promise<void>;
+/**
+ * Menerima heartbeat dari klien untuk memperbarui last_seen_at secara periodik
+ * POST /api/chat/heartbeat
+ */
+export declare const updateHeartbeat: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=chatController.d.ts.map

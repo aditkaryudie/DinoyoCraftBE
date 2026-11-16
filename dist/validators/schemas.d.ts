@@ -153,7 +153,8 @@ export declare const updateProductSchema: z.ZodObject<{
     variants: z.ZodNullable<z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodArray<z.ZodAny>]>>>;
 }, z.core.$strip>;
 export declare const sendMessageSchema: z.ZodObject<{
-    message: z.ZodString;
+    message: z.ZodNullable<z.ZodOptional<z.ZodString>>;
+    image_url: z.ZodNullable<z.ZodOptional<z.ZodString>>;
 }, z.core.$strip>;
 export declare const updateUserStatusSchema: z.ZodObject<{
     is_active: z.ZodCoercedBoolean<unknown>;

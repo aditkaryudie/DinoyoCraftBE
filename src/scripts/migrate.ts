@@ -233,6 +233,7 @@ const tables = [
     \`sender_id\` int UNSIGNED NOT NULL,
     \`receiver_id\` int UNSIGNED NOT NULL,
     \`message\` text COLLATE utf8mb4_unicode_ci NOT NULL,
+    \`image_url\` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`is_read\` tinyint(1) DEFAULT '0',
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
     \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -456,6 +457,7 @@ const runMigration = async () => {
     await ensureColumn('users', 'phone', 'VARCHAR(20) NULL AFTER username');
     await ensureColumn('users', 'birth_date', 'DATE NULL AFTER phone');
     await ensureColumn('users', 'gender', "ENUM('L','P') NULL AFTER birth_date");
+    await ensureColumn('users', 'last_seen_at', 'DATETIME NULL DEFAULT NULL AFTER updated_at');
     try {
       await db.query('ALTER TABLE \`users\` ADD UNIQUE KEY \`uq_users_username\` (\`username\`)');
     } catch { /* sudah ada */ }

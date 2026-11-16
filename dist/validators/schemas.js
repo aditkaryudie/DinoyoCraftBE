@@ -182,7 +182,8 @@ exports.updateProductSchema = zod_1.z.object({
 // 7. Skema Live Chat (Messages)
 // ============================================================
 exports.sendMessageSchema = zod_1.z.object({
-    message: zod_1.z.string().min(1, 'Pesan tidak boleh kosong').max(2000, 'Pesan maksimal 2000 karakter'),
+    message: zod_1.z.string().max(2000, 'Pesan maksimal 2000 karakter').optional().nullable(),
+    image_url: zod_1.z.string().optional().nullable(),
 });
 // ============================================================
 // 8. Skema Administrasi (Admin & Master Data)
