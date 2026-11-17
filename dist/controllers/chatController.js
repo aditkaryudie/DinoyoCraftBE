@@ -363,9 +363,11 @@ const getChatContacts = async (req, res) => {
         ]);
         // Dekripsi preview pesan terakhir untuk setiap kontak
         const decryptedContacts = contacts.map((contact) => {
+            const lastImg = contact.last_image_url || '';
+            const lastIsSticker = Boolean(lastImg && (lastImg.includes('sticker') || lastImg.includes('/stickers/')));
             let preview = contact.last_message ? (0, encryption_js_1.decryptMessage)(contact.last_message) : '';
-            if (!preview && contact.last_image_url) {
-                preview = '📷 [Foto]';
+            if (!preview && lastImg) {
+                preview = lastIsSticker ? '🏷️ Stiker' : '📷 [Foto]';
             }
             const isOnline = Boolean(contact.is_online ||
                 (contact.last_seen_at && (Date.now() - new Date(contact.last_seen_at).getTime() <= 2 * 60 * 1000)));

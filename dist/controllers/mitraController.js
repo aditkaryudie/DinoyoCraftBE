@@ -183,24 +183,33 @@ const getOrders = async (req, res) => {
             return;
         }
         const mitraId = mitra.id;
-        // Cari pesanan milik mitra ini beserta info pembayaran Midtrans
+        // Cari pesanan milik mitra ini beserta rincian ongkir, alamat, dan pembayaran Midtrans
         const [orderRows] = await database_js_1.default.query(`SELECT 
         o.id,
         o.created_at,
         o.status,
         o.total_amount,
+        o.shipping_cost,
         o.shipping_method,
         o.tracking_number,
+        o.customer_notes,
         COALESCE(u.name, 'Customer') AS customer_name,
+        a.recipient_name,
+        a.phone AS recipient_phone,
+        a.full_address,
+        a.city,
+        a.postal_code,
         t.transaction_type AS payment_method,
         t.payment_type,
         t.bank,
         t.gateway,
+        t.gateway_fee,
         t.status AS payment_status,
         t.paid_at,
         t.expiry_time
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.id
+      LEFT JOIN user_addresses a ON o.address_id = a.id
       LEFT JOIN transactions t ON o.transaction_id = t.id
       WHERE o.mitra_id = ?
       ORDER BY o.created_at DESC`, [mitraId]);
@@ -215,6 +224,7 @@ const getOrders = async (req, res) => {
         oi.order_id,
         oi.quantity,
         oi.unit_price,
+        oi.variant,
         p.name AS product_name,
         p.image_urls
       FROM order_items oi
@@ -248,6 +258,7 @@ const getOrders = async (req, res) => {
                 productName: item.product_name,
                 quantity: item.quantity,
                 price: Number(item.unit_price),
+                variantName: item.variant || undefined,
                 image: firstImage,
             });
         }
@@ -255,13 +266,29 @@ const getOrders = async (req, res) => {
         const formattedOrders = orderRows.map((order) => {
             const orderDate = order.created_at ? new Date(order.created_at) : new Date();
             const dateStr = orderDate.toISOString().split('T')[0].replace(/-/g, '');
+            const orderItems = itemsByOrder[order.id] || [];
+            const subtotalProduk = orderItems.reduce((sum, it) => sum + Number(it.price || 0) * Number(it.quantity || 1), 0);
+            const totalAmount = Number(order.total_amount || 0);
+            const shippingCost = Number(order.shipping_cost ?? Math.max(0, totalAmount - subtotalProduk));
+            const gatewayFee = Number(order.gateway_fee || 0);
+            const addressParts = [order.full_address, order.city, order.postal_code]
+                .map((v) => (v ? String(v).trim() : ''))
+                .filter(Boolean);
             return {
                 id: order.id,
                 orderId: `ORD-${dateStr}-00${order.id}`,
                 tanggal: order.created_at,
                 customerName: order.customer_name || 'Customer',
+                recipientName: order.recipient_name || order.customer_name || 'Customer',
+                recipientPhone: order.recipient_phone || null,
+                shippingAddress: addressParts.length > 0 ? addressParts.join(', ') : null,
+                customerNotes: order.customer_notes || null,
                 status: order.status,
-                totalBelanja: Number(order.total_amount || 0),
+                subtotalProduk,
+                shippingCost,
+                gatewayFee,
+                totalBelanja: totalAmount,
+                subtotalBersih: totalAmount,
                 kurir: order.shipping_method || undefined,
                 resi: order.tracking_number || undefined,
                 payment_method: order.payment_method || null,
@@ -271,7 +298,7 @@ const getOrders = async (req, res) => {
                 payment_status: order.payment_status || 'pending',
                 paid_at: order.paid_at || null,
                 expiry_time: order.expiry_time || null,
-                items: itemsByOrder[order.id] || []
+                items: orderItems
             };
         });
         res.json({ success: true, data: formattedOrders });

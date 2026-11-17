@@ -424,9 +424,13 @@ export const getChatContacts = async (req: Request, res: Response): Promise<void
 
     // Dekripsi preview pesan terakhir untuk setiap kontak
     const decryptedContacts = contacts.map((contact: any) => {
+      const lastImg = contact.last_image_url || '';
+      const lastIsSticker = Boolean(
+        lastImg && (lastImg.includes('sticker') || lastImg.includes('/stickers/'))
+      );
       let preview = contact.last_message ? decryptMessage(contact.last_message) : '';
-      if (!preview && contact.last_image_url) {
-        preview = '📷 [Foto]';
+      if (!preview && lastImg) {
+        preview = lastIsSticker ? '🏷️ Stiker' : '📷 [Foto]';
       }
       const isOnline = Boolean(
         contact.is_online ||

@@ -20,6 +20,7 @@ const tables = [
     \`token_version\` int UNSIGNED NOT NULL DEFAULT '0',
     \`google_id\` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     \`avatar_url\` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    \`last_seen_at\` datetime DEFAULT NULL,
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
     \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`),
@@ -212,7 +213,7 @@ const tables = [
     \`user_id\` int UNSIGNED NOT NULL,
     \`title\` varchar(200) NOT NULL,
     \`message\` text NOT NULL,
-    \`type\` enum('order','mitra','promo','system') NOT NULL DEFAULT 'system',
+    \`type\` varchar(50) NOT NULL DEFAULT 'system',
     \`reference_id\` int UNSIGNED DEFAULT NULL,
     \`is_read\` tinyint(1) NOT NULL DEFAULT '0',
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -238,26 +239,30 @@ const tables = [
     // 14. reports (Laporan Pengaduan)
     `CREATE TABLE IF NOT EXISTS \`reports\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`reporter_id\` int UNSIGNED NOT NULL,
-    \`target_type\` enum('product','mitra','review','user') NOT NULL,
-    \`target_id\` int UNSIGNED NOT NULL,
+    \`reporter_id\` int UNSIGNED DEFAULT NULL,
+    \`reporter_name\` varchar(150) NOT NULL,
+    \`type\` varchar(50) NOT NULL,
+    \`target_id\` int UNSIGNED DEFAULT NULL,
+    \`target_name\` varchar(255) NOT NULL,
     \`reason\` text NOT NULL,
-    \`status\` enum('pending','investigating','resolved','dismissed') NOT NULL DEFAULT 'pending',
+    \`status\` varchar(50) NOT NULL DEFAULT 'pending',
+    \`resolved_at\` datetime DEFAULT NULL,
     \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
     \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`id\`),
-    FOREIGN KEY (\`reporter_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+    PRIMARY KEY (\`id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
     // 15. account_deletions (Penutupan Akun Mobile)
     `CREATE TABLE IF NOT EXISTS \`account_deletions\` (
     \`id\` int UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`user_id\` int UNSIGNED NOT NULL,
-    \`reason\` text DEFAULT NULL,
+    \`user_id\` int UNSIGNED DEFAULT NULL,
+    \`name\` varchar(100) NOT NULL,
+    \`email\` varchar(255) NOT NULL,
+    \`reason\` text NOT NULL,
     \`status\` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
-    \`requested_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    \`processed_at\` datetime DEFAULT NULL,
-    PRIMARY KEY (\`id\`),
-    FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+    \`resolved_at\` datetime DEFAULT NULL,
+    \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`updated_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
     // 16. audit_logs
     `CREATE TABLE IF NOT EXISTS \`audit_logs\` (
@@ -341,26 +346,66 @@ const tables = [
     PRIMARY KEY (\`id\`),
     KEY \`idx_wr_user\` (\`user_id\`),
     KEY \`idx_wr_status\` (\`status\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    // 25. ai_settings — konfigurasi asisten AI / auto-reply
+    `CREATE TABLE IF NOT EXISTS \`ai_settings\` (
+    \`id\` int NOT NULL AUTO_INCREMENT,
+    \`is_auto_reply_active\` tinyint(1) DEFAULT '0',
+    \`model_name\` varchar(255) DEFAULT 'gemini-1.5-pro',
+    \`api_key\` varchar(255) DEFAULT NULL,
+    \`system_prompt\` text,
+    PRIMARY KEY (\`id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    // 26. system_logs — log & live monitoring admin
+    `CREATE TABLE IF NOT EXISTS \`system_logs\` (
+    \`id\` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`event_id\` varchar(40) NOT NULL,
+    \`occurred_at\` datetime(3) NOT NULL,
+    \`created_at\` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    \`category\` varchar(50) NOT NULL,
+    \`event_name\` varchar(120) NOT NULL,
+    \`severity\` varchar(20) NOT NULL,
+    \`outcome\` varchar(20) NOT NULL DEFAULT 'info',
+    \`source\` varchar(30) NOT NULL DEFAULT 'backend',
+    \`service\` varchar(60) NOT NULL DEFAULT 'api',
+    \`http_method\` varchar(16) DEFAULT NULL,
+    \`route_template\` varchar(255) DEFAULT NULL,
+    \`status_code\` int DEFAULT NULL,
+    \`duration_ms\` int DEFAULT NULL,
+    \`request_id\` varchar(64) DEFAULT NULL,
+    \`trace_id\` varchar(64) DEFAULT NULL,
+    \`user_id\` int DEFAULT NULL,
+    \`role\` varchar(30) DEFAULT NULL,
+    \`order_id\` int DEFAULT NULL,
+    \`transaction_id\` int DEFAULT NULL,
+    \`reference_code\` varchar(100) DEFAULT NULL,
+    \`message\` text NOT NULL,
+    \`error_code\` varchar(80) DEFAULT NULL,
+    \`error_name\` varchar(120) DEFAULT NULL,
+    \`error_message\` text,
+    \`error_stack\` text,
+    \`metadata_json\` json DEFAULT NULL,
+    \`ip_masked\` varchar(64) DEFAULT NULL,
+    \`user_agent\` varchar(500) DEFAULT NULL,
+    \`platform\` varchar(50) DEFAULT NULL,
+    \`app_version\` varchar(50) DEFAULT NULL,
+    \`acknowledged_at\` datetime DEFAULT NULL,
+    \`acknowledged_by\` int DEFAULT NULL,
+    \`deleted_at\` datetime DEFAULT NULL,
+    \`deleted_by\` int DEFAULT NULL,
+    \`delete_reason\` varchar(255) DEFAULT NULL,
+    \`retention_expires_at\` datetime DEFAULT NULL,
+    PRIMARY KEY (\`id\`),
+    UNIQUE KEY \`uq_system_logs_event_id\` (\`event_id\`),
+    KEY \`idx_system_logs_occurred_at\` (\`occurred_at\`, \`id\`),
+    KEY \`idx_system_logs_category_occurred\` (\`category\`, \`occurred_at\`),
+    KEY \`idx_system_logs_severity_occurred\` (\`severity\`, \`occurred_at\`),
+    KEY \`idx_system_logs_request_id\` (\`request_id\`),
+    KEY \`idx_system_logs_user_occurred\` (\`user_id\`, \`occurred_at\`),
+    KEY \`idx_system_logs_order_id\` (\`order_id\`),
+    KEY \`idx_system_logs_transaction_id\` (\`transaction_id\`),
+    KEY \`idx_system_logs_status_occurred\` (\`status_code\`, \`occurred_at\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
-];
-const seeds = [
-    `INSERT IGNORE INTO \`users\` (\`id\`, \`name\`, \`email\`, \`password_hash\`, \`role\`, \`is_active\`, \`token_version\`, \`google_id\`, \`avatar_url\`, \`created_at\`, \`updated_at\`) VALUES
-  (1, 'Super Admin', 'csdinoyocraft@gmail.com', '$2b$10$wfcDxLuZWPYzSA5UeXj6HO2XU1xjLfaYD.fcGmH7I6fCsg8CZec2K', 'admin', 1, 0, NULL, NULL, '2026-10-10 23:32:11', '2026-10-11 18:54:07'),
-  (34, 'Aditya Karyudie', 'aditkaryudie@gmail.com', NULL, 'admin', 1, 0, '117542459585763900953', 'https://lh3.googleusercontent.com/a/ACg8ocIAzCOQLXeIHKft2sNVvFmwz_YaS9Km1KUc9ETkS2heMDRDPgFZ=s96-c', '2026-10-16 16:59:37', '2026-10-17 11:59:42'),
-  (37, 'Budi Pengrajin', 'budi.mitra@gmail.com', '$2b$10$x0QuoUd0WY8nt2DrNiXNle6oky6RUYlD0Yqpyo8upD0Mo6pOj6omO', 'mitra', 1, 0, NULL, NULL, '2026-10-17 13:46:53', '2026-10-17 14:03:42'),
-  (39, 'aditya', 'labgame211@gmail.com', '$2b$10$BtunGZCkmNvbavfvFuuixeQl9HzcTGMP/hhPucYHr08G4SIO6C70C', 'mitra', 1, 0, NULL, '/uploads/1792404100146-791381469.png', '2026-10-19 10:36:01', '2026-10-19 17:01:51');`,
-    // Categories
-    `INSERT IGNORE INTO \`categories\` (\`id\`, \`name\`, \`description\`, \`image_url\`, \`created_at\`) VALUES
-  (1, 'Dekorasi', 'Produk dekorasi keramik', NULL, '2026-10-19 17:34:08'),
-  (2, 'Peralatan Makan', 'Piring, cangkir, mangkuk, dsb', NULL, '2026-10-19 17:34:08'),
-  (3, 'Souvenir', 'Souvenir keramik khas Dinoyo', NULL, '2026-10-19 17:34:08'),
-  (4, 'Pot Tanaman', 'Pot keramik aneka ukuran', NULL, '2026-10-19 17:34:08');`,
-    // Master Data
-    `INSERT IGNORE INTO \`master_data\` (\`id\`, \`category\`, \`key\`, \`value\`, \`description\`, \`created_by\`, \`created_at\`, \`updated_at\`) VALUES
-  (1, 'KATEGORI_PRODUK', 'GERABAH_TRADISIONAL', 'Gerabah Tradisional', 'Produk gerabah bermotif tradisional Jawa', 1, '2026-10-10 23:32:11', '2026-10-10 23:32:11'),
-  (2, 'KATEGORI_PRODUK', 'KERAMIK_MODERN', 'Keramik Modern', 'Produk keramik dengan desain kontemporer', 1, '2026-10-10 23:32:11', '2026-10-10 23:32:11'),
-  (3, 'KATEGORI_PRODUK', 'SOUVENIR_WISATA', 'Souvenir Wisata', 'Produk souvenir untuk pariwisata Malang', 1, '2026-10-10 23:32:11', '2026-10-10 23:32:11'),
-  (4, 'STATUS_TRANSAKSI', 'PENDING', 'Menunggu Konfirmasi', 'Transaksi sedang menunggu verifikasi', 1, '2026-10-10 23:32:11', '2026-10-10 23:32:11');`
 ];
 // Helper aman untuk menambahkan kolom ke tabel yang sudah ada jika belum tersedia
 const ensureColumn = async (tableName, columnName, columnDef) => {
@@ -380,14 +425,12 @@ const runMigration = async () => {
     try {
         // 1. Matikan Foreign Key check agar urutan tabel aman
         await database_1.default.query('SET FOREIGN_KEY_CHECKS = 0;');
-        // 2. Bersihkan tabel workshop (educational_tours) jika ada karena tampilan workshop 100% statis di Flutter
-        await database_1.default.query('DROP TABLE IF EXISTS `educational_tours`;');
-        // 3. Eksekusi DDL pembuatan seluruh tabel
+        // 2. Eksekusi DDL pembuatan seluruh tabel (hanya struktur tabel, tanpa mengubah/mengisi data)
         console.log('📦 Membuat tabel database (jika belum ada)...');
         for (const tableSql of tables) {
             await database_1.default.query(tableSql);
         }
-        // 4. Sinkronisasi kolom tambahan non-destructive untuk database yang sudah terisi
+        // 3. Sinkronisasi kolom tambahan non-destructive untuk database yang sudah terisi
         console.log('🔄 Memeriksa & menyinkronkan kolom tambahan...');
         await ensureColumn('mitra_profiles', 'rejection_reason', 'TEXT NULL AFTER is_verified');
         await ensureColumn('mitra_profiles', 'rating', 'DECIMAL(3,2) DEFAULT 0.00 AFTER is_active');
@@ -416,6 +459,7 @@ const runMigration = async () => {
         await ensureColumn('transactions', 'expiry_time', 'DATETIME NULL AFTER bank');
         await ensureColumn('transactions', 'paid_at', 'DATETIME NULL AFTER expiry_time');
         await ensureColumn('transactions', 'gateway_response', 'JSON NULL AFTER paid_at');
+        await ensureColumn('transactions', 'proof_image_url', 'VARCHAR(500) NULL AFTER notes');
         // gateway_order_id unik (multiple NULL diizinkan MySQL)
         try {
             await database_1.default.query('ALTER TABLE `transactions` ADD UNIQUE KEY `uq_gateway_order_id` (`gateway_order_id`)');
@@ -446,17 +490,24 @@ const runMigration = async () => {
         await ensureColumn('mitra_profiles', 'avatar_url', 'VARCHAR(500) NULL AFTER banner_url');
         await ensureColumn('mitra_profiles', 'banner_url', 'VARCHAR(500) NULL AFTER instagram');
         await ensureColumn('order_items', 'variant', 'VARCHAR(100) NULL AFTER product_id');
+        // Kolom media chat untuk tabel messages lama
+        await ensureColumn('messages', 'image_url', 'VARCHAR(500) NULL AFTER message');
+        // Kolom moderasi (reports & account_deletions) untuk skema lama
+        await ensureColumn('reports', 'reporter_name', "VARCHAR(150) NOT NULL DEFAULT '' AFTER reporter_id");
+        await ensureColumn('reports', 'type', "VARCHAR(50) NOT NULL DEFAULT 'toko' AFTER reporter_name");
+        await ensureColumn('reports', 'target_name', "VARCHAR(255) NOT NULL DEFAULT '' AFTER target_id");
+        await ensureColumn('reports', 'resolved_at', 'DATETIME NULL AFTER status');
+        await ensureColumn('account_deletions', 'name', "VARCHAR(100) NOT NULL DEFAULT '' AFTER user_id");
+        await ensureColumn('account_deletions', 'email', "VARCHAR(255) NOT NULL DEFAULT '' AFTER name");
+        await ensureColumn('account_deletions', 'resolved_at', 'DATETIME NULL AFTER status');
+        await ensureColumn('account_deletions', 'created_at', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER resolved_at');
+        await ensureColumn('account_deletions', 'updated_at', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
         // Kolom type notifikasi fleksibel (DB lama sempat berupa ENUM yang menolak
         // nilai baru seperti 'withdrawal').
         await database_1.default.query("ALTER TABLE `notifications` MODIFY `type` varchar(50) NOT NULL DEFAULT 'system'");
-        // 5. Seeding data awal aman (INSERT IGNORE)
-        console.log('🌱 Menyuntikkan seed data awal (Super Admin & Kategori)...');
-        for (const seedSql of seeds) {
-            await database_1.default.query(seedSql);
-        }
-        // 6. Hidupkan kembali Foreign Key check
+        // 4. Hidupkan kembali Foreign Key check
         await database_1.default.query('SET FOREIGN_KEY_CHECKS = 1;');
-        console.log('✅ Migrasi & Sinkronisasi Database Berhasil! Database siap digunakan.');
+        console.log('✅ Migrasi & Sinkronisasi Struktur Tabel Berhasil! Data eksisting tetap aman.');
     }
     catch (error) {
         console.error('❌ Terjadi kesalahan saat migrasi:', error);
