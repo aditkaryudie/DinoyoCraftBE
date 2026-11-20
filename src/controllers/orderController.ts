@@ -11,6 +11,7 @@ import { sendPushNotificationToUser } from '../services/notificationService.js';
 import {
   adjustProductStockAndVariant,
   getVariantAvailableStock,
+  parseVariants,
 } from './productController.js';
 import { platformFeeFor } from '../services/midtransService.js';
 import {
@@ -19,6 +20,16 @@ import {
   toIsoWibString,
   toMysqlWibDatetime,
 } from '../services/paymentGatewayService.js';
+
+// ============================================================
+// HELPER — format kode pesanan Mitra (`ORD-YYYYMMDD-00<id>`)
+// ============================================================
+const formatMitraOrderCode = (orderId: number | string, createdAt: unknown): string => {
+  const parsed = createdAt ? new Date(createdAt as string | Date) : new Date();
+  const validDate = isNaN(parsed.getTime()) ? new Date() : parsed;
+  const dateStr = validDate.toISOString().split('T')[0].replace(/-/g, '');
+  return `ORD-${dateStr}-00${orderId}`;
+};
 
 // ============================================================
 // HELPER — catat riwayat status pesanan (timeline tracking)
@@ -83,13 +94,13 @@ export const checkout = async (req: Request, res: Response): Promise<void> => {
 
     // 2. Validasi Mitra
     const [mitras]: any = await connection.query(
-      'SELECT id, user_id, store_name FROM mitra_profiles WHERE id = ? AND is_active = 1',
+      'SELECT id, user_id, store_name FROM mitra_profiles WHERE id = ? AND is_active = 1 AND is_verified = 1',
       [mitra_id]
     );
 
     if (mitras.length === 0) {
       await connection.rollback();
-      sendBadRequest(res, 'Toko mitra tidak valid atau sedang tidak aktif.');
+      sendBadRequest(res, 'Toko mitra tidak valid, belum terverifikasi, atau sedang tidak aktif.');
       return;
     }
 
@@ -99,7 +110,7 @@ export const checkout = async (req: Request, res: Response): Promise<void> => {
 
     for (const item of items) {
       const [prodRows]: any = await connection.query(
-        'SELECT id, name, price, stock, variants, is_deleted FROM products WHERE id = ? FOR UPDATE',
+        'SELECT id, mitra_id, name, price, stock, variants, is_deleted FROM products WHERE id = ? FOR UPDATE',
         [item.product_id]
       );
 
@@ -110,7 +121,37 @@ export const checkout = async (req: Request, res: Response): Promise<void> => {
       }
 
       const prod = prodRows[0];
-      const availableStock = getVariantAvailableStock(prod.variants, Number(prod.stock) || 0, item.variant);
+      if (Number(prod.mitra_id) !== Number(mitra_id)) {
+        await connection.rollback();
+        sendBadRequest(res, `Produk '${prod.name}' berasal dari toko berbeda dan tidak dapat digabung dalam satu pesanan.`);
+        return;
+      }
+
+      const prodVariants = parseVariants(prod.variants);
+      let effectiveVariant: string | null = item.variant ? String(item.variant).trim() : null;
+      if (prodVariants.length > 0) {
+        if (effectiveVariant) {
+          const matched = prodVariants.find(
+            (v) => v.name.trim().toLowerCase() === effectiveVariant!.toLowerCase()
+          );
+          if (!matched) {
+            await connection.rollback();
+            sendBadRequest(res, `Varian '${effectiveVariant}' untuk produk '${prod.name}' tidak tersedia.`);
+            return;
+          }
+          effectiveVariant = matched.name;
+        } else {
+          const fallbackVariant =
+            prodVariants.find((v) => v.stock >= item.quantity) ?? prodVariants[0];
+          effectiveVariant = fallbackVariant.name;
+        }
+      }
+
+      const availableStock = getVariantAvailableStock(
+        prod.variants,
+        Number(prod.stock) || 0,
+        effectiveVariant
+      );
       if (availableStock < item.quantity) {
         await connection.rollback();
         sendBadRequest(res, `Stok produk '${prod.name}' tidak mencukupi (tersedia: ${availableStock}, diminta: ${item.quantity}).`);
@@ -125,7 +166,8 @@ export const checkout = async (req: Request, res: Response): Promise<void> => {
         name: prod.name,
         quantity: item.quantity,
         unit_price: unitPrice,
-        variant: item.variant || null,
+        variant: effectiveVariant,
+        cart_variant: item.variant || null,
       });
     }
 
@@ -169,10 +211,10 @@ export const checkout = async (req: Request, res: Response): Promise<void> => {
         item.variant
       );
 
-      // Hapus item dari keranjang user jika ada
+      // Hapus item varian terkait dari keranjang user jika ada
       await connection.query(
-        'DELETE FROM carts WHERE user_id = ? AND product_id = ?',
-        [userId, item.product_id]
+        'DELETE FROM carts WHERE user_id = ? AND product_id = ? AND (variant <=> ? OR (? IS NOT NULL AND variant <=> ?))',
+        [userId, item.product_id, item.cart_variant, item.variant, item.variant]
       );
     }
 
@@ -265,6 +307,7 @@ export const getUserOrders = async (req: Request, res: Response): Promise<void> 
         o.status,
         o.created_at,
         m.id AS mitra_id,
+        m.user_id AS mitra_user_id,
         m.store_name,
         m.whatsapp_number AS mitra_phone,
         t.reference_code,
@@ -325,6 +368,7 @@ export const getUserOrders = async (req: Request, res: Response): Promise<void> 
           : toIsoWibString(o.expiry_time);
       return {
         ...o,
+        mitra_order_code: formatMitraOrderCode(o.id, o.created_at),
         created_at: toIsoWibString(o.created_at) ?? o.created_at,
         expiry_time: deadline,
         paid_at: toIsoWibString(o.paid_at),
@@ -512,9 +556,10 @@ export const updateOrderStatus = async (req: Request, res: Response): Promise<vo
     const { status, tracking_number, shipping_method } = req.body;
 
     const [orders]: any = await connection.query(
-      `SELECT o.*, m.user_id AS mitra_user_id 
+      `SELECT o.*, m.user_id AS mitra_user_id, t.gateway_order_id 
        FROM orders o
        JOIN mitra_profiles m ON o.mitra_id = m.id
+       LEFT JOIN transactions t ON o.transaction_id = t.id
        WHERE o.id = ? FOR UPDATE`,
       [id]
     );
@@ -672,6 +717,10 @@ export const updateOrderStatus = async (req: Request, res: Response): Promise<vo
 
     await connection.commit();
 
+    if (status === 'cancelled' && order.status !== 'cancelled' && order.gateway_order_id) {
+      await cancelRemoteChargeIfAny(order.gateway_order_id);
+    }
+
     // Dorong update realtime ke HP customer & mitra (non-blocking).
     try {
       await pusher.trigger(`user-${order.user_id}`, 'order-status-changed', {
@@ -746,6 +795,8 @@ export const confirmOrderCompleted = async (req: Request, res: Response): Promis
 export const cancelOrderByCustomer = async (req: Request, res: Response): Promise<void> => {
   const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
+
     const userId = res.locals['userId'];
     const role = res.locals['role'];
     const { id } = req.params;
@@ -755,11 +806,12 @@ export const cancelOrderByCustomer = async (req: Request, res: Response): Promis
        FROM orders o
        JOIN mitra_profiles m ON o.mitra_id = m.id
        LEFT JOIN transactions t ON o.transaction_id = t.id
-       WHERE o.id = ?`,
+       WHERE o.id = ? FOR UPDATE`,
       [id]
     );
 
     if (orders.length === 0) {
+      await connection.rollback();
       sendNotFound(res, 'Pesanan tidak ditemukan.');
       return;
     }
@@ -767,20 +819,20 @@ export const cancelOrderByCustomer = async (req: Request, res: Response): Promis
 
     // Hanya pemilik pesanan (atau admin) yang boleh membatalkan.
     if (order.user_id !== userId && role !== 'admin') {
+      await connection.rollback();
       sendForbidden(res, 'Hanya pemilik pesanan yang dapat membatalkannya.');
       return;
     }
 
     // Belum-bayar saja — pesanan yang sudah dibayar/diproses mengikuti alur mitra.
     if (order.status !== 'pending') {
+      await connection.rollback();
       sendBadRequest(
         res,
         `Pesanan dengan status "${order.status}" tidak dapat dibatalkan langsung. Hubungi penjual bila diperlukan.`
       );
       return;
     }
-
-    await connection.beginTransaction();
 
     // Kembalikan stok produk.
     const [items]: any = await connection.query(
@@ -854,7 +906,7 @@ export const getOrderTracking = async (req: Request, res: Response): Promise<voi
     const [orders]: any = await pool.query(
       `SELECT o.id, o.user_id, o.status, o.tracking_number, o.shipping_method,
               o.shipping_cost, o.total_amount, t.gateway_fee, o.created_at,
-              m.store_name, m.workshop_address,
+              m.user_id AS mitra_user_id, m.store_name, m.workshop_address,
               t.reference_code
        FROM orders o
        JOIN mitra_profiles m ON o.mitra_id = m.id
@@ -902,6 +954,7 @@ export const getOrderTracking = async (req: Request, res: Response): Promise<voi
 
     sendSuccess(res, {
       order_id: order.id,
+      mitra_order_code: formatMitraOrderCode(order.id, order.created_at),
       status: order.status,
       tracking_number: order.tracking_number,
       shipping_method: order.shipping_method,
@@ -911,6 +964,7 @@ export const getOrderTracking = async (req: Request, res: Response): Promise<voi
       channel_fee: trackingTotals.channel,
       total_due: trackingTotals.total_due,
       reference_code: order.reference_code,
+      mitra_user_id: order.mitra_user_id,
       store_name: order.store_name,
       created_at: order.created_at,
       timeline: history,

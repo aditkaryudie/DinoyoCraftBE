@@ -241,6 +241,7 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
     const [orderRows]: any = await pool.query(
       `SELECT 
         o.id,
+        o.user_id AS customer_id,
         o.created_at,
         o.status,
         o.total_amount,
@@ -249,11 +250,13 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
         o.tracking_number,
         o.customer_notes,
         COALESCE(u.name, 'Customer') AS customer_name,
+        u.avatar_url AS customer_avatar,
         a.recipient_name,
         a.phone AS recipient_phone,
         a.full_address,
         a.city,
         a.postal_code,
+        t.reference_code,
         t.transaction_type AS payment_method,
         t.payment_type,
         t.bank,
@@ -279,23 +282,32 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
     const orderIds = orderRows.map((o: any) => o.id);
     const placeholders = orderIds.map(() => '?').join(',');
 
-    // Ambil order items untuk pesanan-pesanan ini
+    // Ambil order items beserta ulasan pembeli (jika sudah selesai & diulas)
     const [itemRows]: any = await pool.query(
       `SELECT 
+        oi.id AS order_item_id,
         oi.order_id,
+        oi.product_id,
         oi.quantity,
         oi.unit_price,
         oi.variant,
         p.name AS product_name,
-        p.image_urls
+        p.image_urls,
+        r.id AS review_id,
+        r.rating AS review_rating,
+        r.comment AS review_comment,
+        r.photo_urls AS review_photos,
+        r.seller_reply AS review_reply
       FROM order_items oi
       JOIN products p ON oi.product_id = p.id
+      LEFT JOIN reviews r ON r.order_item_id = oi.id
       WHERE oi.order_id IN (${placeholders})`,
       orderIds
     );
 
-    // Group items by order_id
+    // Group items & review by order_id
     const itemsByOrder: Record<number, any[]> = {};
+    const reviewByOrder: Record<number, any> = {};
     for (const item of itemRows) {
       if (!itemsByOrder[item.order_id]) {
         itemsByOrder[item.order_id] = [];
@@ -316,12 +328,35 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
         }
       }
       itemsByOrder[item.order_id].push({
+        id: item.order_item_id,
+        productId: item.product_id,
         productName: item.product_name,
         quantity: item.quantity,
         price: Number(item.unit_price),
         variantName: item.variant || undefined,
         image: firstImage,
       });
+
+      if (item.review_id && !reviewByOrder[item.order_id]) {
+        let firstReviewPhoto: string | undefined;
+        try {
+          if (Array.isArray(item.review_photos) && item.review_photos.length > 0) {
+            firstReviewPhoto = String(item.review_photos[0]);
+          } else if (typeof item.review_photos === 'string' && item.review_photos.trim()) {
+            const parsedPhotos = JSON.parse(item.review_photos);
+            if (Array.isArray(parsedPhotos) && parsedPhotos.length > 0) {
+              firstReviewPhoto = String(parsedPhotos[0]);
+            }
+          }
+        } catch {}
+        reviewByOrder[item.order_id] = {
+          reviewId: item.review_id,
+          rating: Number(item.review_rating || 0),
+          ulasan: item.review_comment || '',
+          ulasanFoto: firstReviewPhoto,
+          balasanMitra: item.review_reply || undefined,
+        };
+      }
     }
 
     // Format respons
@@ -329,6 +364,7 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
       const orderDate = order.created_at ? new Date(order.created_at) : new Date();
       const dateStr = orderDate.toISOString().split('T')[0].replace(/-/g, '');
       const orderItems = itemsByOrder[order.id] || [];
+      const orderReview = reviewByOrder[order.id] || null;
       const subtotalProduk = orderItems.reduce(
         (sum: number, it: any) => sum + Number(it.price || 0) * Number(it.quantity || 1),
         0
@@ -343,6 +379,8 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
       return {
         id: order.id,
         orderId: `ORD-${dateStr}-00${order.id}`,
+        referenceCode: order.reference_code || `#DNC-${order.id}`,
+        customerId: order.customer_id ? Number(order.customer_id) : undefined,
         tanggal: order.created_at,
         customerName: order.customer_name || 'Customer',
         recipientName: order.recipient_name || order.customer_name || 'Customer',
@@ -364,6 +402,12 @@ export const getOrders = async (req: Request, res: Response): Promise<void> => {
         payment_status: order.payment_status || 'pending',
         paid_at: order.paid_at || null,
         expiry_time: order.expiry_time || null,
+        reviewId: orderReview?.reviewId,
+        rating: orderReview?.rating,
+        ulasan: orderReview?.ulasan,
+        ulasanAvatar: order.customer_avatar || undefined,
+        ulasanFoto: orderReview?.ulasanFoto,
+        balasanMitra: orderReview?.balasanMitra,
         items: orderItems
       };
     });
@@ -437,25 +481,24 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
       updatedStock = stock !== undefined ? Math.max(0, parseInt(stock, 10) || 0) : Number(existingProduct.stock) || 0;
     }
 
-    let updatedCategoryId = existingProduct.category_id;
-    if (category_id !== undefined) {
-      const parsedCat = parseInt(category_id);
-      if (!isNaN(parsedCat)) {
-        updatedCategoryId = parsedCat;
-      } else {
-        const [catRows]: any = await pool.query('SELECT id FROM categories WHERE name = ? LIMIT 1', [category_id]);
-        if (catRows && catRows.length > 0) {
-          updatedCategoryId = catRows[0].id;
-        }
-      }
-    }
+    const updatedCategoryId = category_id !== undefined && String(category_id).trim() !== ''
+      ? Number(category_id) || existingProduct.category_id
+      : existingProduct.category_id;
+
+    const uploadedFile = (req as any).file;
+    const rawImageUrl = typeof (req.body as any)?.image_url === 'string' ? String((req.body as any).image_url).trim() : '';
+    const updatedImageUrlsJson = uploadedFile
+      ? JSON.stringify([`/uploads/${uploadedFile.filename}`])
+      : rawImageUrl && (rawImageUrl.startsWith('http://') || rawImageUrl.startsWith('https://'))
+      ? JSON.stringify([rawImageUrl])
+      : existingProduct.image_urls;
 
     // Lakukan update ke database
     await pool.query(
       `UPDATE products 
-       SET name = ?, description = ?, price = ?, stock = ?, weight_gram = ?, variants = ?, category_id = ?, updated_at = NOW() 
+       SET name = ?, description = ?, price = ?, stock = ?, weight_gram = ?, variants = ?, category_id = ?, image_urls = ?, updated_at = NOW() 
        WHERE id = ? AND mitra_id = ?`,
-      [updatedName, updatedDesc, updatedPrice, updatedStock, updatedWeight, updatedVariantsJson, updatedCategoryId, id, mitraId]
+      [updatedName, updatedDesc, updatedPrice, updatedStock, updatedWeight, updatedVariantsJson, updatedCategoryId, updatedImageUrlsJson, id, mitraId]
     );
 
     const [updatedRows]: any = await pool.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
@@ -507,7 +550,7 @@ export const getPublicMitraStores = async (req: Request, res: Response): Promise
         COALESCE((SELECT COUNT(*) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS total_reviews
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id
-      WHERE (m.is_active = 1 OR m.is_active IS NULL)
+      WHERE m.is_active = 1 AND m.is_verified = 1
     `;
     const params: any[] = [];
     if (search) {
@@ -570,7 +613,7 @@ export const getPublicMitraDetail = async (req: Request, res: Response): Promise
         COALESCE((SELECT COUNT(*) FROM reviews r JOIN products p ON r.product_id = p.id WHERE p.mitra_id = m.id), 0) AS total_reviews
       FROM mitra_profiles m
       LEFT JOIN users u ON m.user_id = u.id
-      WHERE m.id = ?
+      WHERE m.id = ? AND m.is_active = 1 AND m.is_verified = 1
       LIMIT 1`,
       [id]
     );
