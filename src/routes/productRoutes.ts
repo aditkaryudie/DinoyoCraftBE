@@ -9,7 +9,8 @@ import {
   getProdukMitra,
   hapusProduk,
   getPublicProducts,
-  getPublicProductDetail
+  getPublicProductDetail,
+  getPublicCategories,
 } from '../controllers/productController.js';
 import { updateProduct } from '../controllers/mitraController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
@@ -20,13 +21,14 @@ import { createProductSchema, updateProductSchema } from '../validators/schemas.
 const router = Router();
 
 // Route Publik untuk Mobile & Tamu
+router.get('/categories', getPublicCategories);
 router.get('/public', getPublicProducts);
 router.get('/:id/public', getPublicProductDetail);
 
 // Route untuk produk mitra
 router.get('/', verifyToken, getProdukMitra);
 router.post('/', verifyToken, upload.single('image'), validateZod(createProductSchema), tambahProduk);
-router.put('/:id', verifyToken, validateZod(updateProductSchema), updateProduct);
+router.put('/:id', verifyToken, upload.single('image'), validateZod(updateProductSchema), updateProduct);
 router.delete('/:id', verifyToken, hapusProduk);
 
 export default router;

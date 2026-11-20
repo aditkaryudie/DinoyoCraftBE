@@ -25,6 +25,43 @@ export const parseImageUrls = (raw: unknown): string[] => {
   return [];
 };
 
+/**
+ * Menyelesaikan input category_id (angka ID atau nama kategori) menjadi ID valid
+ * di tabel `categories`, atau mendaftarkan kategori baru bila belum ada.
+ */
+export const resolveCategoryId = async (categoryInput: unknown): Promise<number> => {
+  const rawStr = String(categoryInput ?? '').trim();
+  const numericId = Number(rawStr);
+
+  if (/^\d+$/.test(rawStr) && Number.isFinite(numericId) && numericId > 0) {
+    const [idRows]: any = await pool.query('SELECT id FROM categories WHERE id = ? LIMIT 1', [numericId]);
+    if (idRows && idRows.length > 0) {
+      return Number(idRows[0].id);
+    }
+  }
+
+  const normalizedName = rawStr.toLowerCase() === 'pot' ? 'Pot Tanaman' : rawStr;
+  if (normalizedName) {
+    const [nameRows]: any = await pool.query(
+      'SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1',
+      [normalizedName]
+    );
+    if (nameRows && nameRows.length > 0) {
+      return Number(nameRows[0].id);
+    }
+
+    const [inserted]: any = await pool.query(
+      'INSERT INTO categories (name) VALUES (?)',
+      [normalizedName]
+    );
+    if (inserted?.insertId) {
+      return Number(inserted.insertId);
+    }
+  }
+
+  return 1;
+};
+
 export const parseVariants = (raw: unknown): ProductVariantItem[] => {
   if (!raw) return [];
   let parsed: unknown = raw;
@@ -148,13 +185,14 @@ export const getProdukMitra = async (req: Request, res: Response): Promise<void>
     `;
 
     const [rows]: any = await pool.query(query, [mitraId]);
+    const requestOrigin = `${req.protocol}://${req.get('host') || 'localhost:5000'}`;
 
     const products = rows.map((row: any) => {
       const imageUrls = parseImageUrls(row.image_urls);
       let imageUrl = imageUrls.length > 0 ? imageUrls[0] : '';
 
       if (imageUrl && !imageUrl.startsWith('http')) {
-        imageUrl = `http://localhost:5000${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+        imageUrl = `${requestOrigin}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
       }
 
       const variants = parseVariants(row.variants);
@@ -190,13 +228,24 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Ambil ID profil mitra berdasarkan user_id
-    const [profiles]: any = await pool.query('SELECT id FROM mitra_profiles WHERE user_id = ? LIMIT 1', [userId]);
+    // Ambil ID & status profil mitra berdasarkan user_id
+    const [profiles]: any = await pool.query(
+      'SELECT id, is_verified, is_active FROM mitra_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
     if (!profiles || profiles.length === 0) {
       res.status(403).json({ success: false, message: 'Profil mitra tidak ditemukan. Silakan lengkapi profil toko terlebih dahulu.' });
       return;
     }
-    const mitraId = profiles[0].id;
+    const mitraProfile = profiles[0];
+    if (Number(mitraProfile.is_active) === 0 || Number(mitraProfile.is_verified) === 2) {
+      res.status(403).json({
+        success: false,
+        message: 'Toko Anda sedang ditangguhkan atau pengajuan verifikasi ditolak.',
+      });
+      return;
+    }
+    const mitraId = mitraProfile.id;
 
     const { name, description, price, stock, category_id, image_url, variants, weight_gram } = req.body;
 
@@ -207,11 +256,7 @@ export const tambahProduk = async (req: Request, res: Response): Promise<void> =
     }
 
     // Parse category_id (bisa berupa ID angka atau nama kategori)
-    let parsedCategoryId = parseInt(category_id);
-    if (isNaN(parsedCategoryId)) {
-      const [catRows]: any = await pool.query('SELECT id FROM categories WHERE name = ? LIMIT 1', [category_id]);
-      parsedCategoryId = catRows && catRows.length > 0 ? catRows[0].id : 1;
-    }
+    const parsedCategoryId = await resolveCategoryId(category_id);
 
     // Tangani file foto jika diupload, atau URL foto eksternal
     const file = req.file;
@@ -285,7 +330,11 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
     const limitNum = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 20));
     const offset = (pageNum - 1) * limitNum;
 
-    const conditions: string[] = ['(p.is_deleted = 0 OR p.is_deleted IS NULL)'];
+    const conditions: string[] = [
+      '(p.is_deleted = 0 OR p.is_deleted IS NULL)',
+      'm.is_active = 1',
+      'm.is_verified = 1',
+    ];
     const params: any[] = [];
 
     const targetStoreId = store_id || mitra_id;
@@ -336,6 +385,7 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
         COALESCE(c.name, 'Keramik') AS category_name,
         COALESCE(m.store_name, 'Toko Keramik') AS studio,
         COALESCE(m.store_name, 'Toko Keramik') AS store_name,
+        m.user_id AS mitra_user_id,
         m.workshop_address,
         m.avatar_url AS store_avatar_url,
         COALESCE(
@@ -378,6 +428,7 @@ export const getPublicProducts = async (req: Request, res: Response): Promise<vo
         store_name: row.store_name,
         workshop_address: row.workshop_address,
         mitra_id: row.mitra_id,
+        mitra_user_id: row.mitra_user_id || null,
         rating,
         total_reviews: totalReviews,
         sold_count: Number(row.sold_count) || 0,
@@ -430,11 +481,14 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
         COALESCE(c.name, 'Keramik') AS category_name,
         COALESCE(m.store_name, 'Toko Keramik') AS studio,
         COALESCE(m.store_name, 'Toko Keramik') AS store_name,
+        m.user_id AS mitra_user_id,
         m.workshop_address,
         m.whatsapp_number,
         m.description AS store_description,
         m.avatar_url AS store_avatar_url,
         m.banner_url AS store_banner_url,
+        COALESCE((SELECT ROUND(AVG(r2.rating), 1) FROM reviews r2 JOIN products p2 ON r2.product_id = p2.id WHERE p2.mitra_id = m.id), 0) AS store_rating,
+        COALESCE((SELECT COUNT(*) FROM reviews r2 JOIN products p2 ON r2.product_id = p2.id WHERE p2.mitra_id = m.id), 0) AS store_total_reviews,
         COALESCE(
           (SELECT SUM(oi.quantity)
            FROM order_items oi
@@ -445,7 +499,7 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
       FROM products p
       LEFT JOIN mitra_profiles m ON p.mitra_id = m.id
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
+      WHERE p.id = ? AND (p.is_deleted = 0 OR p.is_deleted IS NULL) AND m.is_active = 1 AND m.is_verified = 1
       LIMIT 1
     `;
 
@@ -513,6 +567,7 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
       store_name: row.store_name,
       workshop_address: row.workshop_address,
       mitra_id: row.mitra_id,
+      mitra_user_id: row.mitra_user_id || null,
       rating,
       total_reviews: totalReviews,
       sold_count: Number(row.sold_count) || 0,
@@ -522,6 +577,7 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
       images: imageUrls,
       store: {
         id: row.mitra_id,
+        user_id: row.mitra_user_id || null,
         name: row.store_name,
         store_name: row.store_name,
         location: row.workshop_address,
@@ -530,8 +586,8 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
         description: row.store_description,
         avatar_url: row.store_avatar_url,
         banner_url: row.store_banner_url,
-        rating,
-        total_reviews: totalReviews,
+        rating: Number(row.store_total_reviews) > 0 ? Number(row.store_rating || 0) : 0,
+        total_reviews: Number(row.store_total_reviews) || 0,
       },
       created_at: row.created_at,
     };
@@ -545,5 +601,35 @@ export const getPublicProductDetail = async (req: Request, res: Response): Promi
   } catch (error) {
     console.error('Error getPublicProductDetail:', error);
     res.status(500).json({ success: false, message: 'Gagal mengambil detail produk' });
+  }
+};
+
+export const getPublicCategories = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const includeAll =
+      req.query.all === '1' ||
+      req.query.all === 'true' ||
+      req.query.include_empty === '1';
+
+    const [rows]: any = await pool.query(
+      `SELECT c.id, c.name, c.description, c.image_url,
+              COUNT(p.id) AS product_count
+       FROM categories c
+       LEFT JOIN products p
+         ON p.category_id = c.id
+        AND (p.is_deleted = 0 OR p.is_deleted IS NULL)
+        ${includeAll ? '' : 'AND p.mitra_id IN (SELECT id FROM mitra_profiles WHERE is_active = 1 AND is_verified = 1)'}
+       GROUP BY c.id, c.name, c.description, c.image_url
+       ${includeAll ? '' : 'HAVING COUNT(p.id) > 0'}
+       ORDER BY c.id ASC`
+    );
+    res.status(200).json({
+      success: true,
+      data: rows || [],
+      message: 'Daftar kategori berhasil diambil',
+    });
+  } catch (error) {
+    console.error('Error getPublicCategories:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengambil kategori' });
   }
 };
