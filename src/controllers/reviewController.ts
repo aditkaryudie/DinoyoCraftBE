@@ -73,6 +73,103 @@ export const getProductReviews = async (req: Request, res: Response): Promise<vo
   }
 };
 
+export const getStoreReviews = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const mitraIdParam = req.query['mitra_id'] ?? req.query['store_id'];
+    const storeNameParam = typeof req.query['store'] === 'string' ? req.query['store'].trim() : '';
+
+    let mitraId: number | null =
+      mitraIdParam !== undefined && !isNaN(Number(mitraIdParam)) && Number(mitraIdParam) > 0
+        ? Number(mitraIdParam)
+        : null;
+
+    if (!mitraId && storeNameParam) {
+      const [mRows]: any = await pool.query(
+        'SELECT id FROM mitra_profiles WHERE LOWER(TRIM(store_name)) = LOWER(TRIM(?)) OR store_name LIKE ? LIMIT 1',
+        [storeNameParam, `%${storeNameParam}%`]
+      );
+      if (mRows && mRows.length > 0) {
+        mitraId = Number(mRows[0].id);
+      }
+    }
+
+    let query = `
+      SELECT 
+        r.id,
+        r.product_id,
+        p.name AS product_name,
+        m.store_name,
+        r.rating,
+        r.variant,
+        r.comment,
+        r.photo_urls,
+        r.helpful_count,
+        r.seller_reply,
+        r.replied_at,
+        r.created_at,
+        u.name AS user_name,
+        u.avatar_url AS user_avatar
+      FROM reviews r
+      JOIN products p ON r.product_id = p.id
+      JOIN mitra_profiles m ON p.mitra_id = m.id
+      JOIN users u ON r.user_id = u.id
+      WHERE p.is_deleted = 0
+    `;
+    const params: any[] = [];
+    if (mitraId) {
+      query += ' AND p.mitra_id = ?';
+      params.push(mitraId);
+    }
+    query += ' ORDER BY r.id DESC LIMIT 100';
+
+    const [reviews]: any = await pool.query(query, params);
+
+    const formattedReviews = (reviews || []).map((rev: any) => {
+      let photos: string[] = [];
+      if (typeof rev.photo_urls === 'string') {
+        try {
+          photos = JSON.parse(rev.photo_urls);
+        } catch {
+          photos = [];
+        }
+      } else if (Array.isArray(rev.photo_urls)) {
+        photos = rev.photo_urls;
+      }
+      return { ...rev, photo_urls: photos };
+    });
+
+    const totalReviews = formattedReviews.length;
+    const avgRating =
+      totalReviews > 0
+        ? Number(
+            (formattedReviews.reduce((acc: number, curr: any) => acc + Number(curr.rating || 0), 0) / totalReviews).toFixed(1)
+          )
+        : 0;
+
+    const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    formattedReviews.forEach((rev: any) => {
+      const rt = Number(rev.rating);
+      if (distribution[rt] !== undefined) {
+        distribution[rt]++;
+      }
+    });
+
+    sendSuccess(
+      res,
+      {
+        totalReviews,
+        avgRating,
+        distribution,
+        reviews: formattedReviews,
+      },
+      'Daftar ulasan toko berhasil diambil.'
+    );
+  } catch (error) {
+    console.error('❌ [getStoreReviews] Error:', error);
+    sendError(res, 'Gagal mengambil ulasan toko.');
+  }
+};
+
 export const createReview = async (req: Request, res: Response): Promise<void> => {
   const connection = await pool.getConnection();
   try {
@@ -80,6 +177,32 @@ export const createReview = async (req: Request, res: Response): Promise<void> =
 
     const userId = res.locals['userId'];
     const { product_id, order_item_id, rating, variant, comment, photo_urls } = req.body;
+
+    // Ekstrak foto ulasan dari multipart upload (jika ada) + photo_urls dari JSON/string
+    const collectedPhotos: string[] = [];
+    if (Array.isArray(photo_urls)) {
+      collectedPhotos.push(...photo_urls.map(String).filter(Boolean));
+    } else if (typeof photo_urls === 'string' && photo_urls.trim()) {
+      try {
+        const parsed = JSON.parse(photo_urls);
+        if (Array.isArray(parsed)) {
+          collectedPhotos.push(...parsed.map(String).filter(Boolean));
+        } else {
+          collectedPhotos.push(photo_urls.trim());
+        }
+      } catch {
+        collectedPhotos.push(photo_urls.trim());
+      }
+    }
+
+    const reqFiles = (req as any).files;
+    if (Array.isArray(reqFiles)) {
+      for (const f of reqFiles) {
+        if (f?.filename) {
+          collectedPhotos.push(`/uploads/${f.filename}`);
+        }
+      }
+    }
 
     // 1. Cek apakah produk valid
     const [products]: any = await connection.query(
@@ -95,20 +218,45 @@ export const createReview = async (req: Request, res: Response): Promise<void> =
 
     const mitraId = products[0].mitra_id;
 
-    // 2. Simpan ulasan
-    const [result]: any = await connection.query(
-      `INSERT INTO reviews (product_id, user_id, order_item_id, rating, variant, comment, photo_urls)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        product_id,
-        userId,
-        order_item_id || null,
-        rating,
-        variant || null,
-        comment || null,
-        photo_urls ? JSON.stringify(photo_urls) : null,
-      ]
-    );
+    // 2. Simpan ulasan (atau perbarui jika order_item_id yang sama sudah pernah diulas oleh user ini)
+    let reviewInsertId = 0;
+    if (order_item_id) {
+      const [existingRev]: any = await connection.query(
+        'SELECT id FROM reviews WHERE user_id = ? AND order_item_id = ? LIMIT 1',
+        [userId, order_item_id]
+      );
+      if (existingRev && existingRev.length > 0) {
+        reviewInsertId = existingRev[0].id;
+        await connection.query(
+          `UPDATE reviews SET rating = ?, variant = COALESCE(?, variant), comment = ?, photo_urls = COALESCE(?, photo_urls), updated_at = NOW()
+           WHERE id = ?`,
+          [
+            rating,
+            variant || null,
+            comment || null,
+            collectedPhotos.length > 0 ? JSON.stringify(collectedPhotos) : null,
+            reviewInsertId,
+          ]
+        );
+      }
+    }
+
+    if (!reviewInsertId) {
+      const [result]: any = await connection.query(
+        `INSERT INTO reviews (product_id, user_id, order_item_id, rating, variant, comment, photo_urls)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          product_id,
+          userId,
+          order_item_id || null,
+          rating,
+          variant || null,
+          comment || null,
+          collectedPhotos.length > 0 ? JSON.stringify(collectedPhotos) : null,
+        ]
+      );
+      reviewInsertId = result.insertId;
+    }
 
     // 3. Update cache rating produk
     const [prodStats]: any = await connection.query(
@@ -141,7 +289,7 @@ export const createReview = async (req: Request, res: Response): Promise<void> =
 
     await connection.commit();
 
-    const [newReview]: any = await pool.query('SELECT * FROM reviews WHERE id = ?', [result.insertId]);
+    const [newReview]: any = await pool.query('SELECT * FROM reviews WHERE id = ?', [reviewInsertId]);
     sendCreated(res, newReview[0], 'Ulasan berhasil dikirim. Terima kasih atas masukan Anda!');
   } catch (error) {
     await connection.rollback();
