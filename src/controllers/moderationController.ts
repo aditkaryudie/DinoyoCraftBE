@@ -4,6 +4,7 @@
 // ============================================================
 
 import { Request, Response } from 'express';
+import bcrypt from 'bcrypt';
 import pool from '../config/database.js';
 
 let tablesInitialized = false;
@@ -190,19 +191,59 @@ export const handleReportAction = async (req: Request, res: Response): Promise<v
     if (actionType === 'suspend' && (reportType === 'toko' || reportType === 'store')) {
       if (targetEntityId) {
         await pool.query(
-          'UPDATE mitra_profiles SET is_active = 0 WHERE id = ? OR user_id = ?',
-          [targetEntityId, targetEntityId]
+          'UPDATE mitra_profiles SET is_active = 0 WHERE id = ?',
+          [targetEntityId]
         );
       }
     } else if ((actionType === 'hapus' || actionType === 'delete') && (reportType === 'ulasan' || reportType === 'review')) {
       if (targetEntityId) {
         try {
+          const [revRows]: any = await pool.query(
+            'SELECT r.product_id, p.mitra_id FROM reviews r LEFT JOIN products p ON r.product_id = p.id WHERE r.id = ? LIMIT 1',
+            [targetEntityId]
+          );
+          const reviewedProductId = revRows?.[0]?.product_id;
+          const reviewedMitraId = revRows?.[0]?.mitra_id;
           await pool.query('DELETE FROM reviews WHERE id = ?', [targetEntityId]);
+          if (reviewedProductId) {
+            const [prodStats]: any = await pool.query(
+              'SELECT COUNT(*) AS total, COALESCE(AVG(rating), 0) AS avg_rating FROM reviews WHERE product_id = ?',
+              [reviewedProductId]
+            );
+            await pool.query(
+              'UPDATE products SET rating = ?, total_reviews = ? WHERE id = ?',
+              [
+                Number(prodStats?.[0]?.total || 0) > 0 ? Number(prodStats[0].avg_rating).toFixed(2) : 0,
+                Number(prodStats?.[0]?.total || 0),
+                reviewedProductId,
+              ]
+            );
+          }
+          if (reviewedMitraId) {
+            const [mitraStats]: any = await pool.query(
+              `SELECT COUNT(r.id) AS total, COALESCE(AVG(r.rating), 0) AS avg_rating
+               FROM reviews r
+               JOIN products p ON r.product_id = p.id
+               WHERE p.mitra_id = ?`,
+              [reviewedMitraId]
+            );
+            await pool.query(
+              'UPDATE mitra_profiles SET rating = ?, total_reviews = ? WHERE id = ?',
+              [
+                Number(mitraStats?.[0]?.total || 0) > 0 ? Number(mitraStats[0].avg_rating).toFixed(2) : 0,
+                Number(mitraStats?.[0]?.total || 0),
+                reviewedMitraId,
+              ]
+            );
+          }
         } catch {
           // Abaikan jika tabel reviews belum terpasang
         }
       }
-    } else if (actionType === 'suspend' && (reportType === 'produk' || reportType === 'product')) {
+    } else if (
+      ['suspend', 'hapus', 'delete', 'takedown'].includes(actionType) &&
+      (reportType === 'produk' || reportType === 'product')
+    ) {
       if (targetEntityId) {
         await pool.query(
           'UPDATE products SET is_deleted = 1 WHERE id = ?',
@@ -325,12 +366,18 @@ export const handleDeletionAction = async (req: Request, res: Response): Promise
 
     const delReq = rows[0];
 
-    // Jika disetujui, nonaktifkan akun pengguna di tabel users
+    // Jika disetujui, nonaktifkan akun pengguna & cabut seluruh sesi token aktif
     if (action === 'approved') {
       if (delReq.user_id) {
-        await pool.query('UPDATE users SET is_active = 0 WHERE id = ?', [delReq.user_id]);
+        await pool.query(
+          'UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?',
+          [delReq.user_id]
+        );
       } else if (delReq.email) {
-        await pool.query('UPDATE users SET is_active = 0 WHERE email = ?', [delReq.email]);
+        await pool.query(
+          'UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE email = ?',
+          [delReq.email]
+        );
       }
     }
 
@@ -369,10 +416,15 @@ export const submitReport = async (req: Request, res: Response): Promise<void> =
       if (uRows && uRows.length > 0) reporterName = uRows[0].name;
     }
 
+    const numericTargetId =
+      target_id !== undefined && target_id !== null && !isNaN(Number(target_id)) && Number(target_id) > 0
+        ? Number(target_id)
+        : null;
+
     const [result]: any = await pool.query(
       `INSERT INTO reports (reporter_id, reporter_name, type, target_id, target_name, reason, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-      [userId || null, reporterName, type, target_id || null, target_name || '-', reason]
+      [userId || null, reporterName, type, numericTargetId, target_name || '-', reason]
     );
 
     res.status(201).json({
@@ -386,41 +438,189 @@ export const submitReport = async (req: Request, res: Response): Promise<void> =
   }
 };
 
+export const getMyAccountDeletionStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    await ensureModerationTables();
+    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const [uRows]: any = await pool.query(
+      'SELECT id, name, email, password_hash, google_id FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    );
+    if (!uRows || uRows.length === 0) {
+      res.status(404).json({ success: false, message: 'Pengguna tidak ditemukan.' });
+      return;
+    }
+    const user = uRows[0];
+
+    const [activeOrders]: any = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM orders WHERE user_id = ? AND status IN ('pending', 'paid', 'packed', 'shipped')",
+      [userId]
+    );
+
+    const [delRows]: any = await pool.query(
+      'SELECT id, reason, status, created_at, resolved_at FROM account_deletions WHERE user_id = ? OR email = ? ORDER BY id DESC LIMIT 5',
+      [userId, user.email]
+    );
+
+    const pendingRequest = (delRows || []).find((r: any) => r.status === 'pending') || null;
+    const latestRequest = (delRows || [])[0] || null;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        email: user.email,
+        has_password: Boolean(user.password_hash),
+        has_active_orders: Number(activeOrders?.[0]?.cnt ?? 0) > 0,
+        active_orders_count: Number(activeOrders?.[0]?.cnt ?? 0),
+        pending_request: pendingRequest,
+        latest_request: latestRequest,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error getMyAccountDeletionStatus:', error);
+    res.status(500).json({ success: false, message: 'Gagal memuat status penghapusan akun.', error: error.message });
+  }
+};
+
 export const submitAccountDeletion = async (req: Request, res: Response): Promise<void> => {
   try {
     await ensureModerationTables();
     const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
-    const { reason, email, name } = req.body;
+    const { reason, password, confirm_email } = req.body;
 
-    let userEmail = email;
-    let userName = name;
-
-    if (userId) {
-      const [uRows]: any = await pool.query('SELECT name, email FROM users WHERE id = ?', [userId]);
-      if (uRows && uRows.length > 0) {
-        userEmail = uRows[0].email;
-        userName = uRows[0].name;
-      }
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Silakan masuk terlebih dahulu.' });
+      return;
     }
 
-    if (!userEmail || !reason) {
-      res.status(400).json({ success: false, message: 'Email dan alasan penghapusan akun wajib diisi' });
+    if (!reason || !String(reason).trim()) {
+      res.status(400).json({ success: false, message: 'Alasan penghapusan akun wajib dipilih.' });
       return;
+    }
+
+    const [uRows]: any = await pool.query(
+      'SELECT id, name, email, password_hash FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    );
+    if (!uRows || uRows.length === 0) {
+      res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
+      return;
+    }
+    const user = uRows[0];
+
+    // 1. Cek apakah sudah ada pengajuan berstatus pending
+    const [existingPending]: any = await pool.query(
+      "SELECT id FROM account_deletions WHERE (user_id = ? OR email = ?) AND status = 'pending' LIMIT 1",
+      [user.id, user.email]
+    );
+    if (existingPending && existingPending.length > 0) {
+      res.status(409).json({
+        success: false,
+        message: 'Anda sudah memiliki pengajuan penghapusan akun yang sedang menunggu peninjauan Admin.',
+      });
+      return;
+    }
+
+    // 2. Cek apakah masih memiliki pesanan aktif yang belum selesai
+    const [activeOrders]: any = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM orders WHERE user_id = ? AND status IN ('pending', 'paid', 'packed', 'shipped')",
+      [user.id]
+    );
+    if (Number(activeOrders?.[0]?.cnt ?? 0) > 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Selesaikan atau batalkan pesanan aktif Anda terlebih dahulu sebelum mengajukan penghapusan akun.',
+      });
+      return;
+    }
+
+    // 3. Verifikasi keamanan identitas (password untuk akun reguler, konfirmasi email untuk akun Google OAuth)
+    if (user.password_hash) {
+      if (!password || !String(password).trim()) {
+        res.status(400).json({
+          success: false,
+          message: 'Kata sandi wajib diisi untuk mengonfirmasi penghapusan akun.',
+        });
+        return;
+      }
+      const isPassValid = await bcrypt.compare(String(password), user.password_hash);
+      if (!isPassValid) {
+        res.status(400).json({
+          success: false,
+          message: 'Kata sandi konfirmasi salah.',
+        });
+        return;
+      }
+    } else {
+      const cleanConfirmEmail = String(confirm_email || '').trim().toLowerCase();
+      if (!cleanConfirmEmail || cleanConfirmEmail !== String(user.email).trim().toLowerCase()) {
+        res.status(400).json({
+          success: false,
+          message: 'Ketik alamat email akun Anda dengan benar untuk mengonfirmasi penghapusan akun.',
+        });
+        return;
+      }
     }
 
     const [result]: any = await pool.query(
       `INSERT INTO account_deletions (user_id, name, email, reason, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`,
-      [userId || null, userName || 'Pengguna', userEmail, reason]
+      [user.id, user.name || 'Pengguna', user.email, String(reason).trim()]
     );
 
     res.status(201).json({
       success: true,
-      message: 'Permohonan penghapusan akun telah dicatat.',
-      requestId: result.insertId
+      message: 'Pengajuan penghapusan akun berhasil dikirim dan sedang menunggu peninjauan Admin.',
+      data: {
+        id: result.insertId,
+        status: 'pending',
+        reason: String(reason).trim(),
+        created_at: new Date().toISOString(),
+      },
+      requestId: result.insertId,
     });
   } catch (error: any) {
     console.error('Error submitAccountDeletion:', error);
     res.status(500).json({ success: false, message: 'Gagal mengajukan penghapusan akun', error: error.message });
+  }
+};
+
+export const cancelMyAccountDeletion = async (req: Request, res: Response): Promise<void> => {
+  try {
+    await ensureModerationTables();
+    const userId = (req as any).user?.id || (req as any).user?.userId || res.locals['userId'];
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const [uRows]: any = await pool.query('SELECT email FROM users WHERE id = ? LIMIT 1', [userId]);
+    const userEmail = uRows?.[0]?.email || '';
+
+    const [result]: any = await pool.query(
+      "DELETE FROM account_deletions WHERE (user_id = ? OR email = ?) AND status = 'pending'",
+      [userId, userEmail]
+    );
+
+    if (!result?.affectedRows) {
+      res.status(404).json({
+        success: false,
+        message: 'Tidak ada pengajuan penghapusan akun berstatus menunggu yang dapat dibatalkan.',
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Pengajuan penghapusan akun berhasil dibatalkan.',
+    });
+  } catch (error: any) {
+    console.error('Error cancelMyAccountDeletion:', error);
+    res.status(500).json({ success: false, message: 'Gagal membatalkan pengajuan penghapusan akun.', error: error.message });
   }
 };

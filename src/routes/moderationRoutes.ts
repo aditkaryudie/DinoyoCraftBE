@@ -10,17 +10,21 @@ import {
   getDeletionRequests,
   handleDeletionAction,
   submitReport,
-  submitAccountDeletion
+  submitAccountDeletion,
+  getMyAccountDeletionStatus,
+  cancelMyAccountDeletion,
 } from '../controllers/moderationController.js';
-import { verifyToken, isAdmin } from '../middlewares/authMiddleware.js';
+import { verifyToken, optionalVerifyToken, isAdmin } from '../middlewares/authMiddleware.js';
 import { validateZod } from '../middlewares/validatorMiddleware.js';
 import { handleReportActionSchema, handleDeletionActionSchema } from '../validators/schemas.js';
 
 const router = express.Router();
 
-// Submission Endpoints (Dapat diakses pengguna / mobile)
-router.post('/report', submitReport);
-router.post('/account-deletion', submitAccountDeletion);
+// Submission & Status Endpoints (Pengguna / Mobile)
+router.post('/report', optionalVerifyToken, submitReport);
+router.get('/account-deletion/me', verifyToken, getMyAccountDeletionStatus);
+router.post('/account-deletion', verifyToken, submitAccountDeletion);
+router.delete('/account-deletion/me', verifyToken, cancelMyAccountDeletion);
 
 // Tab 1: Laporan Pelanggaran (Admin Only)
 router.get('/reports', verifyToken, isAdmin, getReports);

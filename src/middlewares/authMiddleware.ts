@@ -90,6 +90,60 @@ export const verifyToken = async (
 };
 
 /**
+ * optionalVerifyToken
+ * Mengekstrak identitas user bila header Authorization / cookie JWT valid,
+ * namun tetap melanjutkan request (next) bila tidak ada token (untuk endpoint hybrid/publik).
+ */
+export const optionalVerifyToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  let token: string | undefined;
+  const authHeader = req.headers['authorization'];
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.headers.cookie) {
+    const cookies = req.headers.cookie.split(';');
+    for (const cookie of cookies) {
+      const parts = cookie.trim().split('=');
+      const name = parts[0];
+      const val = parts.slice(1).join('=');
+      if (name === 'token' || name === 'jwt' || name === 'accessToken') {
+        token = decodeURIComponent(val);
+        break;
+      }
+    }
+  }
+
+  if (!token) {
+    next();
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    const [rows] = (await db.query(
+      'SELECT token_version, is_active FROM users WHERE id = ? LIMIT 1',
+      [decoded.userId]
+    )) as [any[], unknown];
+    const dbUser = rows?.[0];
+
+    if (dbUser && dbUser.is_active !== 0 && (decoded.ver ?? 0) === dbUser.token_version) {
+      res.locals['userId'] = decoded.userId;
+      res.locals['email'] = decoded.email;
+      res.locals['role'] = decoded.role;
+      req.user = { id: decoded.userId, ...decoded };
+    }
+  } catch {
+    // Abaikan token tidak valid pada mode opsional
+  }
+
+  next();
+};
+
+/**
  * requireRole
  * Middleware untuk membatasi akses berdasarkan peran (RBAC).
  * Harus digunakan SETELAH verifyToken.
